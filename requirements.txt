@@ -1,0 +1,24 @@
+# ---- Web framework ----
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+
+# ---- Dashboard ----
+dash==2.18.0
+dash-bootstrap-components==1.6.0
+plotly==5.24.0
+
+# ---- HTTP clients ----
+aiohttp==3.9.0
+requests==2.31.0
+
+# ---- IOMeter ----
+iometer==0.4.0
+
+# ---- Crypto (for Anker API) ----
+cryptography==41.0.7
+cffi==1.17.1
+
+# ---- Utilities ----
+python-dotenv==1.0.0
+aiofiles==23.2.1
+pydantic==2.9.0
