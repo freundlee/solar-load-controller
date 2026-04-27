@@ -1,17 +1,19 @@
 """Dashboard layout components.
 
-Modern single-page layout using dash-bootstrap-components (Bootstrap 5 / Darkly theme).
-Cards: Real-time Metrics | Power Flow | Manual Control | Auto Status |
-       Daily Summary | Load History | Strategy Config | Appliance Profiles | IOMeter Status
+Two-page layout:
+  /dashboard/          — Operations view (real-time monitoring + manual control)
+  /dashboard/admin     — Admin panel (strategy config, profiles, simulation)
+
+Uses dash-bootstrap-components (Bootstrap 5 / Darkly theme).
 """
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 
-# ---------------------------------------------------------------------------
-# Helper: metric card
-# ---------------------------------------------------------------------------
+# ===================================================================
+# Helpers
+# ===================================================================
 
 def _metric(id_prefix: str, label: str, icon: str, unit: str = "W",
             color: str = "primary") -> dbc.Card:
@@ -31,9 +33,9 @@ def _metric(id_prefix: str, label: str, icon: str, unit: str = "W",
     )
 
 
-# ---------------------------------------------------------------------------
-# Cards
-# ---------------------------------------------------------------------------
+# ===================================================================
+# OPERATIONS PAGE — Cards
+# ===================================================================
 
 def _realtime_metrics_card() -> dbc.Card:
     return dbc.Card([
@@ -60,7 +62,6 @@ def _power_flow_card() -> dbc.Card:
         ]),
         dbc.CardBody([
             html.Div([
-                # Solar → Battery → Home ← Grid  (visual)
                 dbc.Row([
                     dbc.Col([
                         html.Div([
@@ -174,7 +175,6 @@ def _manual_control_card() -> dbc.Card:
                     md=4,
                 ),
             ], className="mt-3 g-2"),
-            # Status message
             html.Div(id="load-status-msg", className="mt-3"),
         ]),
     ], className="mb-3")
@@ -206,6 +206,23 @@ def _auto_status_card() -> dbc.Card:
                 ], md=3),
             ]),
             html.Hr(),
+            dbc.Row([
+                dbc.Col([
+                    html.Span("Avg 30s: ", className="text-muted small"),
+                    html.Span("--", id="strategy-avg30", className="fw-bold"),
+                    html.Span(" W", className="text-muted small"),
+                ], md=4),
+                dbc.Col([
+                    html.Span("Avg 60s: ", className="text-muted small"),
+                    html.Span("--", id="strategy-avg60", className="fw-bold"),
+                    html.Span(" W", className="text-muted small"),
+                ], md=4),
+                dbc.Col([
+                    html.Span("Baseline: ", className="text-muted small"),
+                    html.Span("--", id="strategy-baseline", className="fw-bold"),
+                    html.Span(" W", className="text-muted small"),
+                ], md=4),
+            ], className="mb-2"),
             html.Div([
                 html.Span("Last action: ", className="text-muted"),
                 html.Span("--", id="strategy-last-action"),
@@ -273,6 +290,20 @@ def _daily_summary_card() -> dbc.Card:
     ], className="mb-3")
 
 
+def _live_meter_chart_card() -> dbc.Card:
+    """Real-time meter reading chart (last 5 minutes from in-memory buffer)."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-wave-square me-2"),
+            "Live Grid Meter (5 min)",
+        ]),
+        dbc.CardBody([
+            dcc.Graph(id="live-meter-chart", config={"displayModeBar": False},
+                      style={"height": "250px"}),
+        ]),
+    ], className="mb-3")
+
+
 def _history_chart_card() -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
@@ -286,8 +317,43 @@ def _history_chart_card() -> dbc.Card:
     ], className="mb-3")
 
 
+def _iometer_status_card() -> dbc.Card:
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-wifi me-2"),
+            "IOMeter Status",
+        ]),
+        dbc.CardBody(
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Connection", className="text-muted small"),
+                    html.Div([
+                        html.I(className="fas fa-circle me-1", id="iometer-conn-icon"),
+                        html.Span("--", id="iometer-conn-status"),
+                    ]),
+                ], md=3),
+                dbc.Col([
+                    html.Div("Signal", className="text-muted small"),
+                    html.Div("--", id="iometer-signal", className="fw-bold"),
+                ], md=3),
+                dbc.Col([
+                    html.Div("Battery", className="text-muted small"),
+                    html.Div("--", id="iometer-battery", className="fw-bold"),
+                ], md=3),
+                dbc.Col([
+                    html.Div("Meter No.", className="text-muted small"),
+                    html.Div("--", id="iometer-meter-no", className="fw-bold small"),
+                ], md=3),
+            ]),
+        ),
+    ], className="mb-3")
+
+
+# ===================================================================
+# ADMIN PAGE — Cards
+# ===================================================================
+
 def _strategy_config_card() -> dbc.Card:
-    """Strategy configuration panel with editable parameters."""
     config_items = [
         ("polling_interval_s", "Polling Interval", "s", 5),
         ("reaction_delay_s", "Reaction Delay", "s", 15),
@@ -297,6 +363,8 @@ def _strategy_config_card() -> dbc.Card:
         ("emergency_threshold_w", "Emergency Threshold", "W", 500),
         ("grid_target_w", "Grid Target", "W", -10),
         ("max_load_w", "Max Load", "W", 800),
+        ("min_load_w", "Min Load", "W", 0),
+        ("load_step_w", "Load Step", "W", 10),
         ("electricity_price_eur_kwh", "Electricity Price", "€/kWh", 0.28),
         ("feed_in_tariff_eur_kwh", "Feed-in Tariff", "€/kWh", 0.082),
     ]
@@ -305,7 +373,7 @@ def _strategy_config_card() -> dbc.Card:
     for key, label, unit, default in config_items:
         rows.append(
             dbc.Row([
-                dbc.Col(html.Label(f"{label} ({unit})", className="small"), md=6),
+                dbc.Col(html.Label(f"{label} ({unit})", className="small"), md=5),
                 dbc.Col(
                     dbc.Input(
                         id={"type": "config-input", "key": key},
@@ -323,7 +391,7 @@ def _strategy_config_card() -> dbc.Card:
                         color="outline-success",
                         size="sm",
                     ),
-                    md=2,
+                    md=1,
                 ),
             ], className="mb-2 align-items-center"),
         )
@@ -334,6 +402,8 @@ def _strategy_config_card() -> dbc.Card:
             "Strategy Configuration",
         ]),
         dbc.CardBody([
+            html.P("Adjust strategy parameters. Changes take effect on the next control cycle.",
+                    className="text-muted small mb-3"),
             *rows,
             html.Div(id="config-status-msg", className="mt-2"),
         ]),
@@ -373,111 +443,133 @@ def _profiles_card() -> dbc.Card:
     ], className="mb-3")
 
 
-def _iometer_status_card() -> dbc.Card:
+def _recent_events_card() -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
-            html.I(className="fas fa-wifi me-2"),
-            "IOMeter Status",
+            html.I(className="fas fa-list me-2"),
+            "Recent Load Changes",
         ]),
-        dbc.CardBody(
-            dbc.Row([
-                dbc.Col([
-                    html.Div("Connection", className="text-muted small"),
-                    html.Div([
-                        html.I(className="fas fa-circle me-1", id="iometer-conn-icon"),
-                        html.Span("--", id="iometer-conn-status"),
-                    ]),
-                ], md=3),
-                dbc.Col([
-                    html.Div("Signal", className="text-muted small"),
-                    html.Div("--", id="iometer-signal", className="fw-bold"),
-                ], md=3),
-                dbc.Col([
-                    html.Div("Battery", className="text-muted small"),
-                    html.Div("--", id="iometer-battery", className="fw-bold"),
-                ], md=3),
-                dbc.Col([
-                    html.Div("Meter No.", className="text-muted small"),
-                    html.Div("--", id="iometer-meter-no", className="fw-bold small"),
-                ], md=3),
-            ]),
-        ),
+        dbc.CardBody([
+            html.Div(id="recent-events-table"),
+        ]),
     ], className="mb-3")
 
 
-# ---------------------------------------------------------------------------
-# Main layout
-# ---------------------------------------------------------------------------
+# ===================================================================
+# NAVBAR (shared)
+# ===================================================================
+
+def _navbar() -> dbc.Navbar:
+    return dbc.Navbar(
+        dbc.Container([
+            dbc.NavbarBrand([
+                html.I(className="fas fa-solar-panel me-2"),
+                "Solar Load Controller",
+            ], className="fs-4"),
+            dbc.Nav([
+                dbc.NavItem(dbc.NavLink("Dashboard", href="/dashboard/", active="exact")),
+                dbc.NavItem(dbc.NavLink("Admin", href="/dashboard/admin", active="exact")),
+                dbc.NavItem(html.Span(id="header-time", className="text-muted nav-link")),
+            ], navbar=True),
+        ], fluid=True),
+        color="dark",
+        dark=True,
+        className="mb-3",
+    )
+
+
+# ===================================================================
+# PAGE: Operations Dashboard
+# ===================================================================
+
+def _operations_page() -> html.Div:
+    return html.Div([
+        # Row 1: Real-time metrics
+        _realtime_metrics_card(),
+
+        # Row 2: Power flow
+        _power_flow_card(),
+
+        # Row 3: Manual control + Auto status
+        dbc.Row([
+            dbc.Col(_manual_control_card(), lg=6),
+            dbc.Col(_auto_status_card(), lg=6),
+        ]),
+
+        # Row 4: Daily summary
+        _daily_summary_card(),
+
+        # Row 5: Live meter chart
+        _live_meter_chart_card(),
+
+        # Row 6: History chart
+        _history_chart_card(),
+
+        # Row 7: IOMeter status
+        _iometer_status_card(),
+    ])
+
+
+# ===================================================================
+# PAGE: Admin Panel
+# ===================================================================
+
+def _admin_page() -> html.Div:
+    return html.Div([
+        html.H4([
+            html.I(className="fas fa-tools me-2"),
+            "Administration",
+        ], className="mb-3"),
+
+        dbc.Row([
+            dbc.Col(_strategy_config_card(), lg=6),
+            dbc.Col([
+                _profiles_card(),
+            ], lg=6),
+        ]),
+
+        _recent_events_card(),
+    ])
+
+
+# ===================================================================
+# MAIN LAYOUT (multi-page with dcc.Location)
+# ===================================================================
 
 def build_layout() -> html.Div:
     return html.Div([
+        dcc.Location(id="url", refresh=False),
+
         # Interval timers for auto-refresh
-        dcc.Interval(id="interval-fast", interval=3_000, n_intervals=0),   # 3s for metrics
-        dcc.Interval(id="interval-medium", interval=30_000, n_intervals=0), # 30s for charts
-        dcc.Interval(id="interval-slow", interval=300_000, n_intervals=0),  # 5min for config/profiles
+        dcc.Interval(id="interval-fast", interval=3_000, n_intervals=0),
+        dcc.Interval(id="interval-medium", interval=10_000, n_intervals=0),
+        dcc.Interval(id="interval-slow", interval=300_000, n_intervals=0),
 
         # Hidden stores
         dcc.Store(id="store-prev-load", data=0),
 
-        # Header
-        dbc.Navbar(
-            dbc.Container([
-                dbc.NavbarBrand([
-                    html.I(className="fas fa-solar-panel me-2"),
-                    "Solar Load Controller",
-                ], className="fs-4"),
-                dbc.Nav([
-                    dbc.NavItem(html.Span(id="header-time", className="text-muted")),
-                ], navbar=True),
-            ], fluid=True),
-            color="dark",
-            dark=True,
-            className="mb-3",
-        ),
+        # Navbar
+        _navbar(),
 
-        # Main content
+        # Page content
+        dbc.Container(id="page-content", fluid=True),
+
+        # Footer
         dbc.Container([
-            # Row 1: Real-time metrics
-            _realtime_metrics_card(),
-
-            # Row 2: Power flow
-            _power_flow_card(),
-
-            # Row 3: Manual control + Auto status
-            dbc.Row([
-                dbc.Col(_manual_control_card(), lg=6),
-                dbc.Col(_auto_status_card(), lg=6),
-            ]),
-
-            # Row 4: Daily summary
-            _daily_summary_card(),
-
-            # Row 5: History chart
-            _history_chart_card(),
-
-            # Row 6: Config + Profiles + IOMeter (collapsible)
-            dbc.Accordion([
-                dbc.AccordionItem(
-                    _strategy_config_card(),
-                    title="⚙️ Strategy Configuration",
-                ),
-                dbc.AccordionItem(
-                    _profiles_card(),
-                    title="🔌 Appliance Profiles",
-                ),
-                dbc.AccordionItem(
-                    _iometer_status_card(),
-                    title="📡 IOMeter Status",
-                ),
-            ], start_collapsed=True, className="mb-3"),
-
-            # Footer
             html.Footer([
                 html.Hr(),
                 html.P([
-                    "Solar Load Controller v1.0 | ",
+                    "Solar Load Controller v1.1 | ",
                     html.Span(id="footer-status", className="text-muted"),
                 ], className="text-center text-muted small"),
             ]),
         ], fluid=True),
     ])
+
+
+def get_operations_page() -> html.Div:
+    return _operations_page()
+
+
+def get_admin_page() -> html.Div:
+    return _admin_page()

@@ -199,6 +199,18 @@ class StrategyEngine:
                     await self._adjust_load(meter_w, grid_target, current_load,
                                             max_load, min_load, step, "auto_adjust")
 
+            # --- Layer 2: Excess export balancing ---
+            # When meter is significantly negative (exporting), load is too
+            # high relative to demand → reduce load to stop wasting battery.
+            elif meter_w < grid_target - min_change:
+                if self._in_cooldown(now_mono, cooldown):
+                    return
+                # Use the rolling average to avoid reacting to transient dips
+                avg_30s = self.iometer.get_average_power(30) or meter_w
+                if avg_30s < grid_target - min_change:
+                    await self._adjust_load(avg_30s, grid_target, current_load,
+                                            max_load, min_load, step, "auto_reduce_export")
+
         elif self._state == SpikeState.OBSERVING:
             spike = self._current_spike
             spike.readings.append(meter_w)
@@ -398,6 +410,10 @@ class StrategyEngine:
     # ---- Status for dashboard ----------------------------------------------
 
     def get_status(self) -> dict:
+        reading = self.iometer.latest
+        meter_w = reading.power_w if reading else None
+        avg_30 = self.iometer.get_average_power(30)
+        avg_60 = self.iometer.get_average_power(60)
         return {
             "auto_enabled": self._auto_enabled,
             "state": self._state.value,
@@ -407,6 +423,9 @@ class StrategyEngine:
             "last_action": self.last_action,
             "last_action_time": self.last_action_time,
             "baseline_load_w": self._baseline_load_w,
+            "meter_avg_30s": round(avg_30, 1) if avg_30 is not None else None,
+            "meter_avg_60s": round(avg_60, 1) if avg_60 is not None else None,
+            "meter_instant_w": round(meter_w, 1) if meter_w is not None else None,
             "current_spike": {
                 "peak_power_w": self._current_spike.peak_power_w,
                 "duration_s": int(time.monotonic() - self._current_spike.start_time),

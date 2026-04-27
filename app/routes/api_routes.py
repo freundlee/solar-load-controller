@@ -131,6 +131,24 @@ async def toggle_auto_mode(request: Request, enabled: bool = True):
 
 
 # ---------------------------------------------------------------------------
+# Meter history (in-memory ring buffer — recent readings)
+# ---------------------------------------------------------------------------
+
+@router.get("/meter-live")
+async def get_live_meter(request: Request, seconds: int = 300):
+    """Return recent in-memory readings (not from DB) for real-time charts."""
+    iometer, _, _ = _get_services(request)
+    window = iometer.get_readings_window(seconds)
+    return [
+        {
+            "timestamp": r.timestamp.isoformat(),
+            "power_w": round(r.power_w, 1),
+        }
+        for r in window
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 

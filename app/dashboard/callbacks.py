@@ -2,6 +2,10 @@
 
 All callbacks communicate with the FastAPI backend via HTTP requests
 to /api/* endpoints (same server, different mount path).
+
+Two-page routing:
+  /dashboard/      — Operations dashboard
+  /dashboard/admin — Admin panel
 """
 
 import logging
@@ -12,6 +16,8 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import requests
 from dash import Input, Output, State, callback_context, html, ALL, MATCH, no_update
+
+from app.dashboard.layouts import get_operations_page, get_admin_page
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +61,19 @@ def _api_delete(path: str) -> dict | None:
 def register_callbacks(app: dash.Dash) -> None:
 
     # -------------------------------------------------------------------
+    # 0. Page routing
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("page-content", "children"),
+        Input("url", "pathname"),
+    )
+    def route_page(pathname):
+        if pathname == "/dashboard/admin":
+            return get_admin_page()
+        return get_operations_page()
+
+    # -------------------------------------------------------------------
     # 1. Fast refresh: real-time metrics, power flow, auto status (3s)
     # -------------------------------------------------------------------
 
@@ -79,6 +98,9 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("strategy-adjustments", "children"),
             Output("strategy-spikes", "children"),
             Output("strategy-ignored", "children"),
+            Output("strategy-avg30", "children"),
+            Output("strategy-avg60", "children"),
+            Output("strategy-baseline", "children"),
             Output("strategy-last-action", "children"),
             Output("strategy-current-spike", "children"),
             # Daily summary
@@ -140,6 +162,9 @@ def register_callbacks(app: dash.Dash) -> None:
         if spike_info:
             spike_text = f"{spike_info['peak_power_w']:.0f}W peak, {spike_info['duration_s']}s ({spike_info['profile_action']})"
 
+        avg30 = strategy.get("meter_avg_30s")
+        avg60 = strategy.get("meter_avg_60s")
+
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         connected = "Connected" if meter.get("connected") else "Disconnected"
         init = "Anker OK" if anker.get("initialized") else "Anker N/A"
@@ -165,6 +190,9 @@ def register_callbacks(app: dash.Dash) -> None:
             str(strategy.get("total_adjustments", 0)),
             str(strategy.get("total_spikes_detected", 0)),
             str(strategy.get("total_spikes_ignored", 0)),
+            f"{avg30:.0f}" if avg30 is not None else "--",
+            f"{avg60:.0f}" if avg60 is not None else "--",
+            str(strategy.get("baseline_load_w", 0)),
             strategy.get("last_action", "none"),
             spike_text,
             # Daily
@@ -223,14 +251,14 @@ def register_callbacks(app: dash.Dash) -> None:
         result = _api_post("/set-load", {"load": load_val})
         if result and result.get("success"):
             return dbc.Alert(
-                f"✅ Load set to {load_val}W",
+                f"Load set to {load_val}W",
                 color="success",
                 duration=4000,
             )
         else:
             error = result.get("detail", "Unknown error") if result else "API unreachable"
             return dbc.Alert(
-                f"❌ Failed: {error}",
+                f"Failed: {error}",
                 color="danger",
                 duration=4000,
             )
@@ -247,12 +275,52 @@ def register_callbacks(app: dash.Dash) -> None:
     def toggle_auto_mode(enabled):
         result = _api_post(f"/auto-mode?enabled={'true' if enabled else 'false'}")
         if result and result.get("success"):
-            status = "🟢 Auto mode active" if enabled else "🔴 Auto mode disabled"
-            return html.Span(status)
-        return html.Span("⚠️ Failed to toggle auto mode", className="text-warning")
+            status = "Auto mode active" if enabled else "Auto mode disabled"
+            color = "text-success" if enabled else "text-danger"
+            return html.Span(status, className=color)
+        return html.Span("Failed to toggle auto mode", className="text-warning")
 
     # -------------------------------------------------------------------
-    # 5. History chart (30s refresh)
+    # 5. Live meter chart (10s refresh — from in-memory buffer)
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("live-meter-chart", "figure"),
+        Input("interval-medium", "n_intervals"),
+    )
+    def update_live_meter_chart(_n):
+        data = _api_get("/meter-live?seconds=300") or []
+
+        fig = go.Figure()
+
+        if data:
+            fig.add_trace(go.Scatter(
+                x=[r["timestamp"] for r in data],
+                y=[r["power_w"] for r in data],
+                name="Grid (W)",
+                line={"color": "#17a2b8", "width": 2},
+                fill="tozeroy",
+                fillcolor="rgba(23,162,184,0.15)",
+            ))
+
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)",
+                      annotation_text="Zero", annotation_position="bottom right")
+
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin={"l": 40, "r": 20, "t": 10, "b": 30},
+            legend={"orientation": "h", "y": 1.1},
+            xaxis={"gridcolor": "rgba(255,255,255,0.05)"},
+            yaxis={"gridcolor": "rgba(255,255,255,0.05)", "title": "Watts",
+                    "zeroline": True, "zerolinecolor": "rgba(255,255,255,0.3)"},
+            height=230,
+        )
+        return fig
+
+    # -------------------------------------------------------------------
+    # 6. History chart (30s refresh — from DB)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -297,13 +365,12 @@ def register_callbacks(app: dash.Dash) -> None:
             height=280,
         )
 
-        # Zero line
         fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.2)")
 
         return fig
 
     # -------------------------------------------------------------------
-    # 6. Grid import / cost estimate (daily — slow refresh)
+    # 7. Grid import / cost estimate (daily — slow refresh)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -323,7 +390,48 @@ def register_callbacks(app: dash.Dash) -> None:
         return "0.00", "0.00"
 
     # -------------------------------------------------------------------
-    # 7. Strategy config load (on page load + slow interval)
+    # 8. IOMeter status (slow refresh)
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        [
+            Output("iometer-conn-icon", "className"),
+            Output("iometer-conn-status", "children"),
+            Output("iometer-signal", "children"),
+            Output("iometer-battery", "children"),
+            Output("iometer-meter-no", "children"),
+        ],
+        Input("interval-slow", "n_intervals"),
+    )
+    def update_iometer_status(_n):
+        data = _api_get("/data")
+        if data is None:
+            return "fas fa-circle text-muted", "--", "--", "--", "--"
+
+        meter = data.get("meter", {})
+        connected = meter.get("connected", False)
+
+        if connected:
+            icon_class = "fas fa-circle text-success"
+            conn_text = "Connected"
+        else:
+            icon_class = "fas fa-circle text-danger"
+            conn_text = "Disconnected"
+
+        rssi = meter.get("bridge_rssi")
+        signal = f"{rssi} dBm" if rssi is not None else "--"
+        batt = meter.get("battery_level")
+        batt_text = f"{batt}%" if batt is not None else "--"
+        meter_no = meter.get("meter_number") or "--"
+
+        return icon_class, conn_text, signal, batt_text, meter_no
+
+    # ===================================================================
+    # ADMIN PAGE callbacks
+    # ===================================================================
+
+    # -------------------------------------------------------------------
+    # 9. Strategy config load (on page load + slow interval)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -335,16 +443,12 @@ def register_callbacks(app: dash.Dash) -> None:
         if config is None:
             raise dash.exceptions.PreventUpdate
 
-        # We need to return values in the same order as ALL pattern-matching
-        # outputs. Dash resolves them alphabetically by key.
-        keys = sorted(config.keys())
-        # But we only have inputs for specific keys. Use ctx to get ids.
         ctx = callback_context
         output_ids = [o["id"]["key"] for o in ctx.outputs_list]
         return [config.get(k, 0) for k in output_ids]
 
     # -------------------------------------------------------------------
-    # 8. Strategy config save (individual buttons)
+    # 10. Strategy config save (individual buttons)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -358,16 +462,13 @@ def register_callbacks(app: dash.Dash) -> None:
         if not ctx.triggered:
             return no_update
 
-        # Find which button was clicked
         triggered = ctx.triggered[0]
         prop_id = triggered["prop_id"]
 
-        # Parse the key from the pattern-matched ID
         import json as _json
         btn_id = _json.loads(prop_id.rsplit(".", 1)[0])
         key = btn_id["key"]
 
-        # Find the corresponding value
         for i, inp_id in enumerate(ctx.inputs_list[0]):
             if inp_id["id"]["key"] == key:
                 value = values[i]
@@ -377,11 +478,11 @@ def register_callbacks(app: dash.Dash) -> None:
 
         result = _api_post("/config", {"key": key, "value": value})
         if result and result.get("success"):
-            return dbc.Alert(f"✅ {key} = {value}", color="success", duration=3000)
-        return dbc.Alert(f"❌ Failed to save {key}", color="danger", duration=3000)
+            return dbc.Alert(f"{key} = {value}", color="success", duration=3000)
+        return dbc.Alert(f"Failed to save {key}", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
-    # 9. Appliance profiles table
+    # 11. Appliance profiles table
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -430,7 +531,7 @@ def register_callbacks(app: dash.Dash) -> None:
                          bordered=True, dark=True, hover=True, size="sm")
 
     # -------------------------------------------------------------------
-    # 10. Add profile
+    # 12. Add profile
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -458,11 +559,11 @@ def register_callbacks(app: dash.Dash) -> None:
             "action": action or "observe",
         })
         if result and result.get("success"):
-            return dbc.Alert(f"✅ Profile '{name}' added", color="success", duration=3000)
-        return dbc.Alert("❌ Failed to add profile", color="danger", duration=3000)
+            return dbc.Alert(f"Profile '{name}' added", color="success", duration=3000)
+        return dbc.Alert("Failed to add profile", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
-    # 11. Delete profile
+    # 13. Delete profile
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -482,36 +583,61 @@ def register_callbacks(app: dash.Dash) -> None:
 
         result = _api_delete(f"/profiles/{profile_id}")
         if result and result.get("success"):
-            return dbc.Alert("✅ Profile deleted", color="info", duration=3000)
-        return dbc.Alert("❌ Failed to delete", color="danger", duration=3000)
+            return dbc.Alert("Profile deleted", color="info", duration=3000)
+        return dbc.Alert("Failed to delete", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
-    # 12. IOMeter status (slow refresh)
+    # 14. Recent load changes table (admin page)
     # -------------------------------------------------------------------
 
     @app.callback(
-        [
-            Output("iometer-conn-icon", "className"),
-            Output("iometer-conn-status", "children"),
-            Output("iometer-signal", "children"),
-            Output("iometer-battery", "children"),
-            Output("iometer-meter-no", "children"),
-        ],
-        Input("interval-slow", "n_intervals"),
+        Output("recent-events-table", "children"),
+        Input("interval-medium", "n_intervals"),
     )
-    def update_iometer_status(_n):
-        data = _api_get("/data")
-        if data is None:
-            return "fas fa-circle text-muted", "--", "--", "--", "--"
+    def render_recent_events(_n):
+        events = _api_get("/load-history?hours=24") or []
 
-        meter = data.get("meter", {})
-        connected = meter.get("connected", False)
-        icon_class = "fas fa-circle text-success" if connected else "fas fa-circle text-danger"
-        conn_text = "Connected" if connected else "Disconnected"
-        rssi = meter.get("bridge_rssi")
-        signal = f"{rssi} dBm" if rssi is not None else "--"
-        batt = meter.get("battery_level")
-        batt_text = f"{batt}%" if batt is not None else "--"
-        meter_no = meter.get("meter_number") or "--"
+        if not events:
+            return html.P("No load changes in the last 24h.", className="text-muted")
 
-        return icon_class, conn_text, signal, batt_text, meter_no
+        header = html.Thead(html.Tr([
+            html.Th("Time"),
+            html.Th("Old"),
+            html.Th("New"),
+            html.Th("Reason"),
+            html.Th("Meter"),
+            html.Th("Solar"),
+            html.Th("Batt %"),
+        ]))
+
+        rows = []
+        for e in events[:50]:
+            ts = e.get("timestamp", "")
+            try:
+                ts = ts.split("T")[1][:8] if "T" in ts else ts[-8:]
+            except Exception:
+                pass
+            reason = e.get("reason", "")
+            reason_badge_color = {
+                "manual": "primary",
+                "auto_adjust": "success",
+                "auto_reduce_export": "info",
+                "auto_emergency": "danger",
+                "auto_spike": "warning",
+                "auto_readjust": "secondary",
+                "auto_restore": "light",
+            }.get(reason, "secondary")
+
+            rows.append(html.Tr([
+                html.Td(ts, className="small"),
+                html.Td(f"{e.get('old_load_w', 0)}W"),
+                html.Td(f"{e.get('new_load_w', 0)}W", className="fw-bold"),
+                html.Td(dbc.Badge(reason, color=reason_badge_color)),
+                html.Td(f"{e.get('meter_reading_w', 0):.0f}W" if e.get('meter_reading_w') else "--"),
+                html.Td(f"{e.get('solar_production_w', 0):.0f}W" if e.get('solar_production_w') else "--"),
+                html.Td(f"{e.get('battery_soc', 0):.0f}%" if e.get('battery_soc') else "--"),
+            ]))
+
+        return dbc.Table([header, html.Tbody(rows)],
+                         bordered=True, dark=True, hover=True, size="sm",
+                         responsive=True)
