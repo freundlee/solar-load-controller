@@ -37,11 +37,32 @@ class AnkerService:
         self.home_demand_w: float = 0.0
         self.active_mode: str = "Unknown"
 
+        # Per-channel solar data
+        self.pv1_power_w: float = 0.0
+        self.pv2_power_w: float = 0.0
+        self.micro_inverter_power_w: float = 0.0
+        self.ac_power_w: float = 0.0
+
+        # Per-channel daily energy (kWh) - populated by refresh_details
+        self.today_pv1_kwh: float = 0.0
+        self.today_pv2_kwh: float = 0.0
+        self.today_mi_kwh: float = 0.0
+
+        # Smart plugs: list of {sn, alias, tag, power_w, online}
+        self.smart_plugs: list[dict] = []
+
+        # Inverter
+        self.inverter_power_w: float = 0.0
+        self.inverter_alias: str = ""
+        self.inverter_online: bool = False
+
         # Energy stats (today)
         self.today_solar_kwh: float = 0.0
         self.today_charge_kwh: float = 0.0
         self.today_discharge_kwh: float = 0.0
         self.today_usage_kwh: float = 0.0
+        self.today_grid_import_kwh: float = 0.0
+        self.today_grid_export_kwh: float = 0.0
 
     # ---- Lifecycle ----------------------------------------------------------
 
@@ -128,7 +149,6 @@ class AnkerService:
 
             site = self._api.sites.get(self._site_id, {})
             sb_info = site.get("solarbank_info", {})
-            unit = sb_info.get("power_unit", "W")
 
             self.solar_power_w = float(sb_info.get("total_photovoltaic_power", 0))
             self.battery_soc = round(
@@ -136,15 +156,19 @@ class AnkerService:
             )
             self.battery_power_w = float(sb_info.get("total_charging_power", 0))
             self.output_power_w = float(sb_info.get("total_output_power", 0))
-
             self.home_demand_w = float(site.get("home_load_power", 0))
 
-            # Device preset (current load setting)
+            # Per-channel solar (from solarbank_info aggregated)
+            self.pv1_power_w = float(sb_info.get("solar_power_1", 0))
+            self.pv2_power_w = float(sb_info.get("solar_power_2", 0))
+            self.micro_inverter_power_w = float(sb_info.get("micro_inverter_power", 0))
+            self.ac_power_w = float(sb_info.get("ac_power", 0))
+
+            # Device preset (current load setting) + per-device data
             for sn, device in self._api.devices.items():
                 if sn == self._device_sn:
                     preset = device.get("preset_system_output_power", 0)
                     self.current_load_w = int(float(preset or 0))
-                    break
 
             # Operating mode
             mode = site.get("scene_mode")
@@ -155,13 +179,45 @@ class AnkerService:
                 )
                 self.active_mode = mode_name
 
-            # Energy today
+            # Smart plugs
+            plugs = []
+            for sn, device in self._api.devices.items():
+                if device.get("type") == "smartplug":
+                    plugs.append({
+                        "sn": sn,
+                        "alias": device.get("alias") or device.get("name", sn),
+                        "tag": device.get("tag", ""),
+                        "power_w": float(device.get("current_power", 0)),
+                        "online": device.get("status") == "1"
+                                  or device.get("status_desc") == "online",
+                    })
+            self.smart_plugs = plugs
+
+            # Standalone inverter (MI80 etc.)
+            for sn, device in self._api.devices.items():
+                if device.get("type") == "inverter":
+                    self.inverter_power_w = float(device.get("generate_power", 0))
+                    self.inverter_alias = device.get("alias") or device.get("name", "")
+                    self.inverter_online = (device.get("status_desc") == "online")
+                    break
+
+            # Energy today — only update if energy_details is populated.
+            # update_sites() replaces the sites dict and wipes energy_details,
+            # so skip the update when it's empty to preserve values from
+            # refresh_details() / update_device_energy().
             energy = site.get("energy_details") or {}
             today = energy.get("today") or {}
-            self.today_solar_kwh = float(today.get("solar_production", 0))
-            self.today_charge_kwh = float(today.get("solar_to_battery", 0))
-            self.today_discharge_kwh = float(today.get("battery_discharge", 0))
-            self.today_usage_kwh = float(today.get("solar_to_home", 0))
+            if today:
+                self.today_solar_kwh = float(today.get("solar_production", 0))
+                self.today_charge_kwh = float(today.get("solar_to_battery", 0))
+                self.today_discharge_kwh = float(today.get("battery_discharge", 0))
+                self.today_usage_kwh = float(today.get("solar_to_home", 0))
+                self.today_grid_import_kwh = float(today.get("grid_to_home", 0))
+                self.today_grid_export_kwh = float(today.get("solar_to_grid", 0))
+                # Per-channel daily energy
+                self.today_pv1_kwh = float(today.get("solar_production_pv1", 0))
+                self.today_pv2_kwh = float(today.get("solar_production_pv2", 0))
+                self.today_mi_kwh = float(today.get("solar_production_microinverter", 0))
 
         except Exception as exc:
             logger.exception("Error refreshing Anker data: %s", exc)
@@ -173,6 +229,29 @@ class AnkerService:
             await self._api.update_device_details()
             await self._api.update_site_details()
             await self._api.update_device_energy()
+
+            # Read energy now — update_device_energy populates energy_details,
+            # but the next update_sites() call will wipe it.
+            site = self._api.sites.get(self._site_id, {})
+            energy = site.get("energy_details") or {}
+            today = energy.get("today") or {}
+            if today:
+                self.today_solar_kwh = float(today.get("solar_production", 0))
+                self.today_charge_kwh = float(today.get("solar_to_battery", 0))
+                self.today_discharge_kwh = float(today.get("battery_discharge", 0))
+                self.today_usage_kwh = float(today.get("solar_to_home", 0))
+                self.today_grid_import_kwh = float(today.get("grid_to_home", 0))
+                self.today_grid_export_kwh = float(today.get("solar_to_grid", 0))
+                self.today_pv1_kwh = float(today.get("solar_production_pv1", 0))
+                self.today_pv2_kwh = float(today.get("solar_production_pv2", 0))
+                self.today_mi_kwh = float(today.get("solar_production_microinverter", 0))
+                logger.info(
+                    "Energy updated: solar=%.2f charge=%.2f discharge=%.2f "
+                    "pv1=%.2f pv2=%.2f mi=%.2f kWh",
+                    self.today_solar_kwh, self.today_charge_kwh,
+                    self.today_discharge_kwh, self.today_pv1_kwh,
+                    self.today_pv2_kwh, self.today_mi_kwh,
+                )
         except Exception as exc:
             logger.exception("Error refreshing Anker details: %s", exc)
 
@@ -237,10 +316,28 @@ class AnkerService:
             "current_load_w": self.current_load_w,
             "home_demand_w": self.home_demand_w,
             "active_mode": self.active_mode,
+            # Per-channel solar
+            "pv1_power_w": self.pv1_power_w,
+            "pv2_power_w": self.pv2_power_w,
+            "micro_inverter_power_w": self.micro_inverter_power_w,
+            "ac_power_w": self.ac_power_w,
+            "today_pv1_kwh": self.today_pv1_kwh,
+            "today_pv2_kwh": self.today_pv2_kwh,
+            "today_mi_kwh": self.today_mi_kwh,
+            # Inverter
+            "inverter_power_w": self.inverter_power_w,
+            "inverter_alias": self.inverter_alias,
+            "inverter_online": self.inverter_online,
+            # Smart plugs
+            "smart_plugs": self.smart_plugs,
+            # Energy today
             "today_solar_kwh": self.today_solar_kwh,
             "today_charge_kwh": self.today_charge_kwh,
             "today_discharge_kwh": self.today_discharge_kwh,
             "today_usage_kwh": self.today_usage_kwh,
+            "today_grid_import_kwh": self.today_grid_import_kwh,
+            "today_grid_export_kwh": self.today_grid_export_kwh,
+            # Meta
             "site_id": self._site_id,
             "device_sn": self._device_sn,
             "initialized": self._initialized,

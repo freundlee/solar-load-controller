@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def _anker_poller(anker: AnkerService, fast_interval: float = 30.0,
-                        slow_interval: float = 300.0) -> None:
+                        slow_interval: float = 600.0) -> None:
     """Periodically refresh Anker cloud data. Auto-retries init on failure."""
     cycle = 0
     slow_every = max(1, int(slow_interval / fast_interval))
@@ -40,7 +40,8 @@ async def _anker_poller(anker: AnkerService, fast_interval: float = 30.0,
                     continue
             await anker.refresh_data()
             cycle += 1
-            if cycle % slow_every == 0:
+            # Run on first cycle (cycle==1) and then every slow_every cycles
+            if cycle == 1 or cycle % slow_every == 0:
                 await anker.refresh_details()
         except Exception as exc:
             logger.exception("Anker poller error: %s", exc)

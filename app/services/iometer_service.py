@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import aiohttp
@@ -133,8 +133,8 @@ class IOMeterService:
             )
             return reading
 
-        except aiohttp.ClientError as exc:
-            logger.error("IOMeter connection error: %s", exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.debug("IOMeter unreachable: %s", exc)
             self.status.connected = False
             return None
         except Exception as exc:
@@ -168,8 +168,8 @@ class IOMeterService:
             )
             return self.status
 
-        except aiohttp.ClientError as exc:
-            logger.error("IOMeter status error: %s", exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.debug("IOMeter status unreachable: %s", exc)
             self.status.connected = False
             return self.status
         except Exception as exc:

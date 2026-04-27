@@ -20,8 +20,12 @@ def create_dash_app() -> dash.Dash:
         ],
         requests_pathname_prefix="/dashboard/",
         suppress_callback_exceptions=True,
-        title="Solar Load Controller",
+        title="Solar Control",
         update_title=None,
+        meta_tags=[
+            {"name": "viewport",
+             "content": "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"},
+        ],
     )
 
     app.layout = build_layout()

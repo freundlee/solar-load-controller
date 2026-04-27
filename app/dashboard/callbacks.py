@@ -54,6 +54,18 @@ def _api_delete(path: str) -> dict | None:
         return None
 
 
+# Plotly dark layout defaults (compact for mobile)
+_PLOT_LAYOUT = dict(
+    template="plotly_dark",
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    margin={"l": 35, "r": 10, "t": 5, "b": 30},
+    legend={"orientation": "h", "y": 1.12, "font": {"size": 10}},
+    xaxis={"gridcolor": "rgba(255,255,255,0.05)"},
+    yaxis={"gridcolor": "rgba(255,255,255,0.05)"},
+)
+
+
 # ---------------------------------------------------------------------------
 # Register all callbacks
 # ---------------------------------------------------------------------------
@@ -74,7 +86,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return get_operations_page()
 
     # -------------------------------------------------------------------
-    # 1. Fast refresh: real-time metrics, power flow, auto status (3s)
+    # 1. Fast refresh: metrics, flow, solar channels, auto status (3s)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -84,6 +96,13 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("battery-value", "children"),
             Output("meter-value", "children"),
             Output("load-value", "children"),
+            # Solar channels
+            Output("pv1-value", "children"),
+            Output("pv2-value", "children"),
+            Output("mi-value", "children"),
+            Output("pv1-kwh", "children"),
+            Output("pv2-kwh", "children"),
+            Output("mi-kwh", "children"),
             # Power flow
             Output("flow-solar", "children"),
             Output("flow-battery-soc", "children"),
@@ -91,8 +110,6 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("flow-home", "children"),
             Output("flow-grid", "children"),
             Output("flow-grid-icon", "className"),
-            Output("flow-arrow-grid-home", "children"),
-            Output("flow-arrow-grid-home", "className"),
             # Auto status
             Output("strategy-state", "children"),
             Output("strategy-adjustments", "children"),
@@ -108,6 +125,11 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("daily-charge", "children"),
             Output("daily-discharge", "children"),
             Output("daily-usage", "children"),
+            Output("daily-grid-import", "children"),
+            Output("daily-grid-export", "children"),
+            # Smart plugs
+            Output("smart-plugs-container", "children"),
+            Output("plugs-count-badge", "children"),
             # Header time
             Output("header-time", "children"),
             # Footer status
@@ -136,39 +158,64 @@ def register_callbacks(app: dash.Dash) -> None:
         battery_pw = anker.get("battery_power_w", 0)
         home_w = anker.get("home_demand_w", 0)
 
+        # Per-channel solar
+        pv1 = anker.get("pv1_power_w", 0)
+        pv2 = anker.get("pv2_power_w", 0)
+        mi = anker.get("micro_inverter_power_w", 0)
+        pv1_kwh = anker.get("today_pv1_kwh", 0)
+        pv2_kwh = anker.get("today_pv2_kwh", 0)
+        mi_kwh = anker.get("today_mi_kwh", 0)
+
         # Grid display
         meter_display = f"{meter_w:.0f}" if meter_w is not None else "--"
         if meter_w is not None:
             if meter_w > 10:
-                grid_icon_class = "fas fa-tower-broadcast fa-2x text-danger"
-                grid_arrow = "⟶"
-                grid_arrow_class = "fs-3 text-center text-danger mt-2"
+                grid_icon_class = "fas fa-tower-broadcast fa-lg text-danger"
             elif meter_w < -10:
-                grid_icon_class = "fas fa-tower-broadcast fa-2x text-success"
-                grid_arrow = "⟵"
-                grid_arrow_class = "fs-3 text-center text-success mt-2"
+                grid_icon_class = "fas fa-tower-broadcast fa-lg text-success"
             else:
-                grid_icon_class = "fas fa-tower-broadcast fa-2x text-muted"
-                grid_arrow = "⟷"
-                grid_arrow_class = "fs-3 text-center text-muted mt-2"
+                grid_icon_class = "fas fa-tower-broadcast fa-lg text-muted"
         else:
-            grid_icon_class = "fas fa-tower-broadcast fa-2x text-muted"
-            grid_arrow = "⟷"
-            grid_arrow_class = "fs-3 text-center text-muted mt-2"
+            grid_icon_class = "fas fa-tower-broadcast fa-lg text-muted"
 
         # Strategy
         spike_info = strategy.get("current_spike")
         spike_text = "None"
         if spike_info:
-            spike_text = f"{spike_info['peak_power_w']:.0f}W peak, {spike_info['duration_s']}s ({spike_info['profile_action']})"
+            spike_text = (f"{spike_info['peak_power_w']:.0f}W peak, "
+                          f"{spike_info['duration_s']}s ({spike_info['profile_action']})")
 
         avg30 = strategy.get("meter_avg_30s")
         avg60 = strategy.get("meter_avg_60s")
 
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Smart plugs
+        plugs = anker.get("smart_plugs", [])
+        plug_rows = []
+        for p in plugs:
+            online = p.get("online", False)
+            status_icon = "fas fa-circle text-success" if online else "fas fa-circle text-danger"
+            pw = p.get("power_w", 0)
+            plug_rows.append(
+                dbc.Row([
+                    dbc.Col([
+                        html.I(className=f"{status_icon} me-1", style={"fontSize": "0.5rem"}),
+                        html.Span(p.get("alias", "?"), className="small"),
+                    ], xs=5),
+                    dbc.Col([
+                        html.Span(f"{pw:.0f}W", className="small fw-bold"
+                                  + (" text-warning" if pw > 5 else " text-muted")),
+                    ], xs=3),
+                    dbc.Col([
+                        html.Span(p.get("tag", ""), className="small text-muted"),
+                    ], xs=4),
+                ], className="mb-1")
+            )
+        plugs_content = plug_rows if plug_rows else [html.Span("No plugs", className="text-muted small")]
+
+        now_str = datetime.now().strftime("%H:%M:%S")
         connected = "Connected" if meter.get("connected") else "Disconnected"
-        init = "Anker OK" if anker.get("initialized") else "Anker N/A"
-        footer = f"{init} | IOMeter {connected} | {now_str}"
+        init = "OK" if anker.get("initialized") else "N/A"
+        footer = f"Anker {init} | Meter {connected} | {now_str}"
 
         return [
             # Metrics
@@ -176,15 +223,20 @@ def register_callbacks(app: dash.Dash) -> None:
             f"{battery_soc:.0f}",
             meter_display,
             f"{load_w}",
+            # Solar channels
+            f"{pv1:.0f}",
+            f"{pv2:.0f}",
+            f"{mi:.0f}",
+            f"{pv1_kwh:.2f}",
+            f"{pv2_kwh:.2f}",
+            f"{mi_kwh:.2f}",
             # Power flow
-            f"{solar_w:.0f} W",
+            f"{solar_w:.0f}W",
             f"{battery_soc:.0f}",
             f"{battery_pw:.0f}",
-            f"{home_w:.0f} W",
-            f"{meter_display} W",
+            f"{home_w:.0f}W",
+            f"{meter_display}W",
             grid_icon_class,
-            grid_arrow,
-            grid_arrow_class,
             # Strategy
             strategy.get("state", "--"),
             str(strategy.get("total_adjustments", 0)),
@@ -200,6 +252,11 @@ def register_callbacks(app: dash.Dash) -> None:
             f"{anker.get('today_charge_kwh', 0):.2f}",
             f"{anker.get('today_discharge_kwh', 0):.2f}",
             f"{anker.get('today_usage_kwh', 0):.2f}",
+            f"{anker.get('today_grid_import_kwh', 0):.2f}",
+            f"{anker.get('today_grid_export_kwh', 0):.2f}",
+            # Smart plugs
+            plugs_content,
+            f"{len(plugs)}",
             # Header / footer
             now_str,
             footer,
@@ -250,18 +307,10 @@ def register_callbacks(app: dash.Dash) -> None:
 
         result = _api_post("/set-load", {"load": load_val})
         if result and result.get("success"):
-            return dbc.Alert(
-                f"Load set to {load_val}W",
-                color="success",
-                duration=4000,
-            )
+            return dbc.Alert(f"Load → {load_val}W", color="success", duration=3000)
         else:
             error = result.get("detail", "Unknown error") if result else "API unreachable"
-            return dbc.Alert(
-                f"Failed: {error}",
-                color="danger",
-                duration=4000,
-            )
+            return dbc.Alert(f"Failed: {error}", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
     # 4. Auto mode toggle
@@ -275,10 +324,10 @@ def register_callbacks(app: dash.Dash) -> None:
     def toggle_auto_mode(enabled):
         result = _api_post(f"/auto-mode?enabled={'true' if enabled else 'false'}")
         if result and result.get("success"):
-            status = "Auto mode active" if enabled else "Auto mode disabled"
+            status = "ON" if enabled else "OFF"
             color = "text-success" if enabled else "text-danger"
-            return html.Span(status, className=color)
-        return html.Span("Failed to toggle auto mode", className="text-warning")
+            return html.Span(status, className=f"{color} fw-bold")
+        return html.Span("Error", className="text-warning")
 
     # -------------------------------------------------------------------
     # 5. Live meter chart (10s refresh — from in-memory buffer)
@@ -303,24 +352,12 @@ def register_callbacks(app: dash.Dash) -> None:
                 fillcolor="rgba(23,162,184,0.15)",
             ))
 
-        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)",
-                      annotation_text="Zero", annotation_position="bottom right")
-
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin={"l": 40, "r": 20, "t": 10, "b": 30},
-            legend={"orientation": "h", "y": 1.1},
-            xaxis={"gridcolor": "rgba(255,255,255,0.05)"},
-            yaxis={"gridcolor": "rgba(255,255,255,0.05)", "title": "Watts",
-                    "zeroline": True, "zerolinecolor": "rgba(255,255,255,0.3)"},
-            height=230,
-        )
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+        fig.update_layout(**_PLOT_LAYOUT, height=200, yaxis_title="W")
         return fig
 
     # -------------------------------------------------------------------
-    # 6. History chart (30s refresh — from DB)
+    # 6. History chart (10s refresh — from DB)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -338,7 +375,7 @@ def register_callbacks(app: dash.Dash) -> None:
             fig.add_trace(go.Scatter(
                 x=[r["timestamp"] for r in meter_data_sorted],
                 y=[r["power_w"] for r in meter_data_sorted],
-                name="Grid Meter (W)",
+                name="Grid (W)",
                 line={"color": "#17a2b8", "width": 1},
                 fill="tozeroy",
                 fillcolor="rgba(23,162,184,0.1)",
@@ -349,45 +386,94 @@ def register_callbacks(app: dash.Dash) -> None:
             fig.add_trace(go.Scatter(
                 x=[r["timestamp"] for r in load_data_sorted],
                 y=[r["new_load_w"] for r in load_data_sorted],
-                name="Load Setting (W)",
+                name="Load (W)",
                 line={"color": "#ffc107", "width": 2},
                 mode="lines+markers",
+                marker={"size": 3},
             ))
 
-        fig.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-            margin={"l": 40, "r": 20, "t": 10, "b": 30},
-            legend={"orientation": "h", "y": 1.1},
-            xaxis={"gridcolor": "rgba(255,255,255,0.05)"},
-            yaxis={"gridcolor": "rgba(255,255,255,0.05)", "title": "Watts"},
-            height=280,
-        )
-
         fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.2)")
-
+        fig.update_layout(**_PLOT_LAYOUT, height=250, yaxis_title="W")
         return fig
 
     # -------------------------------------------------------------------
-    # 7. Grid import / cost estimate (daily — slow refresh)
+    # 7. Daily energy bar chart (slow refresh)
     # -------------------------------------------------------------------
 
     @app.callback(
-        [
-            Output("daily-grid-import", "children"),
-            Output("daily-cost-saved", "children"),
-        ],
+        Output("daily-energy-chart", "figure"),
         Input("interval-slow", "n_intervals"),
     )
-    def update_daily_energy(_n):
-        data = _api_get("/daily-energy?days=1")
-        if data and len(data) > 0:
-            today = data[0]
-            grid_kwh = today.get("grid_import_wh", 0) / 1000
-            saved = today.get("cost_saved_eur", 0)
-            return f"{grid_kwh:.2f}", f"{saved:.2f}"
-        return "0.00", "0.00"
+    def update_daily_energy_chart(_n):
+        data = _api_get("/daily-energy?days=30") or []
+
+        fig = go.Figure()
+
+        if data:
+            # Sort by date ascending
+            data_sorted = sorted(data, key=lambda x: x.get("date", ""))
+            dates = [d["date"] for d in data_sorted]
+
+            # Solar production
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=[d.get("solar_production_wh", 0) / 1000 for d in data_sorted],
+                name="Solar (kWh)",
+                marker_color="#ffc107",
+                opacity=0.8,
+            ))
+
+            # Home consumption
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=[d.get("home_consumption_wh", 0) / 1000 for d in data_sorted],
+                name="Home (kWh)",
+                marker_color="#17a2b8",
+                opacity=0.8,
+            ))
+
+            # Grid export (Einspeisung)
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=[d.get("grid_export_wh", 0) / 1000 for d in data_sorted],
+                name="Export (kWh)",
+                marker_color="#28a745",
+                opacity=0.8,
+            ))
+
+            # Grid import
+            fig.add_trace(go.Bar(
+                x=dates,
+                y=[d.get("grid_import_wh", 0) / 1000 for d in data_sorted],
+                name="Import (kWh)",
+                marker_color="#dc3545",
+                opacity=0.8,
+            ))
+
+        fig.update_layout(
+            **_PLOT_LAYOUT,
+            height=280,
+            yaxis_title="kWh",
+            barmode="group",
+            bargap=0.15,
+            bargroupgap=0.05,
+        )
+        return fig
+
+    # -------------------------------------------------------------------
+    # 7b. Smart Plugs collapse toggle
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("plugs-collapse", "is_open"),
+        Input("plugs-toggle", "n_clicks"),
+        State("plugs-collapse", "is_open"),
+        prevent_initial_call=True,
+    )
+    def toggle_plugs(n_clicks, is_open):
+        if n_clicks:
+            return not is_open
+        return is_open
 
     # -------------------------------------------------------------------
     # 8. IOMeter status (slow refresh)
@@ -413,13 +499,13 @@ def register_callbacks(app: dash.Dash) -> None:
 
         if connected:
             icon_class = "fas fa-circle text-success"
-            conn_text = "Connected"
+            conn_text = "OK"
         else:
             icon_class = "fas fa-circle text-danger"
-            conn_text = "Disconnected"
+            conn_text = "Off"
 
         rssi = meter.get("bridge_rssi")
-        signal = f"{rssi} dBm" if rssi is not None else "--"
+        signal = f"{rssi}dBm" if rssi is not None else "--"
         batt = meter.get("battery_level")
         batt_text = f"{batt}%" if batt is not None else "--"
         meter_no = meter.get("meter_number") or "--"
@@ -494,29 +580,25 @@ def register_callbacks(app: dash.Dash) -> None:
         profiles = _api_get("/profiles") or []
 
         if not profiles:
-            return html.P("No profiles configured.", className="text-muted")
+            return html.P("No profiles.", className="text-muted small")
 
         header = html.Thead(html.Tr([
             html.Th("Name"),
-            html.Th("Power Range (W)"),
-            html.Th("Typ. Duration"),
+            html.Th("Range"),
             html.Th("Action"),
-            html.Th("Seen"),
             html.Th(""),
         ]))
 
         rows = []
         for p in profiles:
             rows.append(html.Tr([
-                html.Td(p["name"]),
-                html.Td(f"{p['power_min_w']:.0f} – {p['power_max_w']:.0f}"),
-                html.Td(f"{p.get('typical_duration_s', '?')}s"),
+                html.Td(p["name"], className="small"),
+                html.Td(f"{p['power_min_w']:.0f}–{p['power_max_w']:.0f}W", className="small"),
                 html.Td(
                     dbc.Badge(p["action"],
                               color={"ignore": "secondary", "observe": "info",
                                      "adjust": "warning"}.get(p["action"], "light")),
                 ),
-                html.Td(str(p.get("occurrences", 0))),
                 html.Td(
                     dbc.Button(
                         html.I(className="fas fa-trash"),
@@ -528,7 +610,8 @@ def register_callbacks(app: dash.Dash) -> None:
             ]))
 
         return dbc.Table([header, html.Tbody(rows)],
-                         bordered=True, dark=True, hover=True, size="sm")
+                         bordered=True, dark=True, hover=True, size="sm",
+                         responsive=True)
 
     # -------------------------------------------------------------------
     # 12. Add profile
@@ -548,7 +631,7 @@ def register_callbacks(app: dash.Dash) -> None:
     )
     def add_profile(_clicks, name, min_w, max_w, typ_dur, action):
         if not name or min_w is None or max_w is None:
-            return dbc.Alert("Please fill in Name, Min W, and Max W", color="warning", duration=3000)
+            return dbc.Alert("Fill Name, Min W, Max W", color="warning", duration=3000)
 
         result = _api_post("/profiles", {
             "name": name,
@@ -559,8 +642,8 @@ def register_callbacks(app: dash.Dash) -> None:
             "action": action or "observe",
         })
         if result and result.get("success"):
-            return dbc.Alert(f"Profile '{name}' added", color="success", duration=3000)
-        return dbc.Alert("Failed to add profile", color="danger", duration=3000)
+            return dbc.Alert(f"'{name}' added", color="success", duration=3000)
+        return dbc.Alert("Failed", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
     # 13. Delete profile
@@ -583,8 +666,8 @@ def register_callbacks(app: dash.Dash) -> None:
 
         result = _api_delete(f"/profiles/{profile_id}")
         if result and result.get("success"):
-            return dbc.Alert("Profile deleted", color="info", duration=3000)
-        return dbc.Alert("Failed to delete", color="danger", duration=3000)
+            return dbc.Alert("Deleted", color="info", duration=3000)
+        return dbc.Alert("Failed", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
     # 14. Recent load changes table (admin page)
@@ -598,27 +681,24 @@ def register_callbacks(app: dash.Dash) -> None:
         events = _api_get("/load-history?hours=24") or []
 
         if not events:
-            return html.P("No load changes in the last 24h.", className="text-muted")
+            return html.P("No changes in 24h.", className="text-muted small")
 
         header = html.Thead(html.Tr([
             html.Th("Time"),
-            html.Th("Old"),
-            html.Th("New"),
+            html.Th("Load"),
             html.Th("Reason"),
             html.Th("Meter"),
-            html.Th("Solar"),
-            html.Th("Batt %"),
         ]))
 
         rows = []
-        for e in events[:50]:
+        for e in events[:30]:
             ts = e.get("timestamp", "")
             try:
-                ts = ts.split("T")[1][:8] if "T" in ts else ts[-8:]
+                ts = ts.split("T")[1][:5] if "T" in ts else ts[-8:]
             except Exception:
                 pass
             reason = e.get("reason", "")
-            reason_badge_color = {
+            reason_color = {
                 "manual": "primary",
                 "auto_adjust": "success",
                 "auto_reduce_export": "info",
@@ -630,12 +710,11 @@ def register_callbacks(app: dash.Dash) -> None:
 
             rows.append(html.Tr([
                 html.Td(ts, className="small"),
-                html.Td(f"{e.get('old_load_w', 0)}W"),
-                html.Td(f"{e.get('new_load_w', 0)}W", className="fw-bold"),
-                html.Td(dbc.Badge(reason, color=reason_badge_color)),
-                html.Td(f"{e.get('meter_reading_w', 0):.0f}W" if e.get('meter_reading_w') else "--"),
-                html.Td(f"{e.get('solar_production_w', 0):.0f}W" if e.get('solar_production_w') else "--"),
-                html.Td(f"{e.get('battery_soc', 0):.0f}%" if e.get('battery_soc') else "--"),
+                html.Td(f"{e.get('old_load_w', 0)}→{e.get('new_load_w', 0)}W",
+                         className="small fw-bold"),
+                html.Td(dbc.Badge(reason, color=reason_color)),
+                html.Td(f"{e.get('meter_reading_w', 0):.0f}W"
+                         if e.get("meter_reading_w") else "--", className="small"),
             ]))
 
         return dbc.Table([header, html.Tbody(rows)],
