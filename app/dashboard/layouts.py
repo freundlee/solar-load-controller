@@ -582,12 +582,99 @@ def _operations_page() -> html.Div:
 # PAGE: Admin Panel
 # ===================================================================
 
+def _iometer_config_card() -> dbc.Card:
+    """Admin card for configuring IOMeter data source."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-network-wired me-2"),
+            "IOMeter Source",
+        ], className="py-2"),
+        dbc.CardBody([
+            html.P("Select meter data source", className="text-muted small mb-2"),
+
+            # Source selector
+            dbc.Row([
+                dbc.Col(html.Label("Source", className="small"), xs=4),
+                dbc.Col(
+                    dbc.RadioItems(
+                        id="iometer-source-radio",
+                        options=[
+                            {"label": " LAN Direct", "value": "local"},
+                            {"label": " ESP32 Push (API)", "value": "esp32"},
+                        ],
+                        value="local",
+                        inline=True,
+                        className="small",
+                    ),
+                    xs=8,
+                ),
+            ], className="mb-3 align-items-center"),
+
+            # Host input (only relevant for local mode)
+            html.Div(
+                id="iometer-host-group",
+                children=[
+                    dbc.Row([
+                        dbc.Col(html.Label("IOMeter Host", className="small"), xs=4),
+                        dbc.Col(
+                            dbc.Input(
+                                id="iometer-host-input",
+                                type="text",
+                                placeholder="192.168.178.96",
+                                value="192.168.178.96",
+                                size="sm",
+                                className="bg-dark text-light border-secondary",
+                            ),
+                            xs=8,
+                        ),
+                    ], className="mb-2 align-items-center"),
+                ],
+            ),
+
+            # ESP32 info (only visible in ESP32 mode)
+            html.Div(
+                id="iometer-esp32-info",
+                children=[
+                    dbc.Alert([
+                        html.I(className="fas fa-info-circle me-2"),
+                        "ESP32 pushes data via ",
+                        html.Code("POST /api/esp32/meter"),
+                        " endpoint.",
+                        html.Br(),
+                        html.Small("Set ESP32_API_KEY in .env",
+                                   className="text-muted"),
+                    ], color="info", className="small mb-0 py-2"),
+                ],
+                style={"display": "none"},
+            ),
+
+            # Connection status
+            html.Div(id="iometer-config-status",
+                      className="small text-muted mt-2"),
+
+            # Save button
+            dbc.Button(
+                [html.I(className="fas fa-save me-1"), "Save"],
+                id="iometer-config-save-btn",
+                color="success", size="sm",
+                className="mt-2 w-100",
+            ),
+            html.Div(id="iometer-config-save-msg", className="mt-2"),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
 def _admin_page() -> html.Div:
     return html.Div([
         html.H5([
             html.I(className="fas fa-tools me-2"),
             "Administration",
         ], className="mb-2"),
+
+        # IOMeter data source config at top
+        dbc.Row([
+            dbc.Col(_iometer_config_card(), xs=12, lg=6),
+        ], className="mb-3"),
 
         dbc.Row([
             dbc.Col(_strategy_config_card(), xs=12, lg=6),

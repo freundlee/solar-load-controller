@@ -720,3 +720,67 @@ def register_callbacks(app: dash.Dash) -> None:
         return dbc.Table([header, html.Tbody(rows)],
                          bordered=True, dark=True, hover=True, size="sm",
                          responsive=True)
+
+    # ------------------------------------------------------------------
+    # 15. IOMeter config — load current settings
+    # ------------------------------------------------------------------
+
+    @app.callback(
+        [Output("iometer-source-radio", "value"),
+         Output("iometer-host-input", "value"),
+         Output("iometer-config-status", "children")],
+        Input("interval-slow", "n_intervals"),
+    )
+    def load_iometer_config(_n):
+        config = _api_get("/config")
+        if config is None:
+            raise dash.exceptions.PreventUpdate
+        source = config.get("iometer_source", "local")
+        host = config.get("iometer_host", "192.168.178.96")
+        status_text = f"Mode: {'LAN Direct' if source == 'local' else 'ESP32 Push'}"
+        return source, host, status_text
+
+    # ------------------------------------------------------------------
+    # 16. IOMeter config — toggle host input / ESP32 info visibility
+    # ------------------------------------------------------------------
+
+    @app.callback(
+        [Output("iometer-host-group", "style"),
+         Output("iometer-esp32-info", "style")],
+        Input("iometer-source-radio", "value"),
+    )
+    def toggle_iometer_mode(source):
+        if source == "esp32":
+            return {"display": "none"}, {"display": "block"}
+        return {"display": "block"}, {"display": "none"}
+
+    # ------------------------------------------------------------------
+    # 17. IOMeter config — save
+    # ------------------------------------------------------------------
+
+    @app.callback(
+        Output("iometer-config-save-msg", "children"),
+        Input("iometer-config-save-btn", "n_clicks"),
+        [State("iometer-source-radio", "value"),
+         State("iometer-host-input", "value")],
+        prevent_initial_call=True,
+    )
+    def save_iometer_config(n_clicks, source, host):
+        if not n_clicks:
+            return no_update
+
+        results = []
+        r1 = _api_post("/config", {"key": "iometer_source", "value": source})
+        results.append(r1)
+
+        if source == "local" and host:
+            r2 = _api_post("/config", {"key": "iometer_host", "value": host})
+            results.append(r2)
+
+        if all(r and r.get("success") for r in results):
+            mode_label = "LAN Direct" if source == "local" else "ESP32 Push"
+            msg = f"Saved: {mode_label}"
+            if source == "local":
+                msg += f" ({host})"
+            return dbc.Alert(msg, color="success", duration=4000)
+        return dbc.Alert("Save failed", color="danger", duration=4000)

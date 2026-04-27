@@ -19,6 +19,12 @@ from app import database as db
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# IOMeter source modes
+# ---------------------------------------------------------------------------
+IOMETER_SOURCE_LOCAL = "local"
+IOMETER_SOURCE_ESP32 = "esp32"
+
+# ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
 
@@ -61,6 +67,7 @@ class IOMeterService:
         self.status: IOMeterStatus = IOMeterStatus()
         self._last_db_write: float = 0.0
         self._db_write_interval = 300.0  # persist to SQLite every 5 min
+        self._last_push_time: float = 0.0  # tracks ESP32 push freshness
 
     @property
     def base_url(self) -> str:
@@ -182,11 +189,33 @@ class IOMeterService:
         if reading is None:
             return None
 
+        self._ingest(reading)
+        return reading
+
+    def push_reading(self, power_w: float,
+                     total_consumption_wh: float | None = None,
+                     total_production_wh: float | None = None) -> MeterReading:
+        """Accept a reading pushed from an external source (e.g. ESP32).
+
+        Returns the ingested MeterReading.
+        """
+        reading = MeterReading(
+            timestamp=datetime.now(timezone.utc),
+            power_w=power_w,
+            total_consumption_wh=total_consumption_wh,
+            total_production_wh=total_production_wh,
+        )
+        self._ingest(reading)
+        return reading
+
+    def _ingest(self, reading: MeterReading) -> None:
+        """Common ingestion: buffer, update latest, persist periodically."""
         self.latest = reading
         self.readings.append(reading)
         self.status.connected = True
+        self._last_push_time = time.monotonic()
 
-        # Persist to DB periodically (not every poll)
+        # Persist to DB periodically (not every reading)
         now = time.monotonic()
         if now - self._last_db_write >= self._db_write_interval:
             try:
@@ -202,14 +231,39 @@ class IOMeterService:
         return reading
 
     async def start_polling(self, interval: float | None = None) -> None:
-        """Start continuous polling loop (run as asyncio task)."""
+        """Start continuous polling loop (run as asyncio task).
+
+        In 'esp32' mode, polling is paused — data arrives via push_reading().
+        The loop still runs to detect stale data and update connection status.
+        """
         self._running = True
         poll_interval = interval or iometer_cfg.polling_interval_s
         logger.info("IOMeter polling started (interval=%.1fs, host=%s)", poll_interval, self._host)
 
         while self._running:
-            await self.poll_once()
-            await asyncio.sleep(poll_interval)
+            source = db.get_config("iometer_source", IOMETER_SOURCE_LOCAL)
+
+            if source == IOMETER_SOURCE_ESP32:
+                # In ESP32 mode: don't poll locally, but check for stale data
+                if self._last_push_time > 0:
+                    stale_s = time.monotonic() - self._last_push_time
+                    if stale_s > 60:
+                        self.status.connected = False
+                        logger.debug("ESP32 push data stale (%.0fs)", stale_s)
+                await asyncio.sleep(poll_interval)
+            else:
+                # Refresh host from config in case it changed at runtime
+                configured_host = db.get_config("iometer_host", iometer_cfg.host)
+                if configured_host != self._host:
+                    self._host = configured_host
+                    logger.info("IOMeter host changed to %s", self._host)
+                    # Force new session
+                    if self._session and not self._session.closed:
+                        await self._session.close()
+                    self._session = None
+
+                await self.poll_once()
+                await asyncio.sleep(poll_interval)
 
     def stop_polling(self) -> None:
         self._running = False

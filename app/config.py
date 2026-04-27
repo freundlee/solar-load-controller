@@ -63,6 +63,10 @@ class StrategyDefaults:
     # Auto-mode
     auto_mode_enabled: bool = True
 
+    # IOMeter data source: 'local' = poll via LAN, 'esp32' = receive via ESP32 API
+    iometer_source: str = 'local'
+    iometer_host: str = '192.168.178.96'
+
     # Anker API refresh intervals
     anker_fast_poll_s: float = 30.0          # site data refresh
     anker_slow_poll_s: float = 300.0         # device details / energy refresh

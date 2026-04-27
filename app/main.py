@@ -17,6 +17,7 @@ from app.services.iometer_service import IOMeterService
 from app.services.anker_service import AnkerService
 from app.services.strategy_engine import StrategyEngine
 from app.routes.api_routes import router as api_router
+from app.routes.esp32_routes import router as esp32_router
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ def create_app() -> FastAPI:
 
     # REST API
     app.include_router(api_router)
+    app.include_router(esp32_router)
 
     # Mount Dash dashboard
     try:
