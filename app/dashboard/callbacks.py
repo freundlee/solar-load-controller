@@ -179,11 +179,8 @@ def register_callbacks(app: dash.Dash) -> None:
             grid_icon_class = "fas fa-tower-broadcast fa-lg text-muted"
 
         # Strategy
-        spike_info = strategy.get("current_spike")
-        spike_text = "None"
-        if spike_info:
-            spike_text = (f"{spike_info['peak_power_w']:.0f}W peak, "
-                          f"{spike_info['duration_s']}s ({spike_info['profile_action']})")
+        plug_total = strategy.get("plug_total_w", 0)
+        plug_text = f"Plugs: {plug_total:.0f}W"
 
         avg30 = strategy.get("meter_avg_30s")
         avg60 = strategy.get("meter_avg_60s")
@@ -246,7 +243,7 @@ def register_callbacks(app: dash.Dash) -> None:
             f"{avg60:.0f}" if avg60 is not None else "--",
             str(strategy.get("baseline_load_w", 0)),
             strategy.get("last_action", "none"),
-            spike_text,
+            plug_text,
             # Daily
             f"{anker.get('today_solar_kwh', 0):.2f}",
             f"{anker.get('today_charge_kwh', 0):.2f}",

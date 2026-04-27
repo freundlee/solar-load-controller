@@ -266,7 +266,7 @@ def _auto_status_card() -> dbc.Card:
                 html.Span("--", id="strategy-last-action", className="small"),
             ], className="mt-1"),
             html.Div([
-                html.Span("Spike: ", className="text-muted small"),
+                html.Span("Plugs: ", className="text-muted small"),
                 html.Span("--", id="strategy-current-spike", className="small"),
             ]),
         ], className="p-2"),
@@ -430,12 +430,10 @@ def _iometer_status_card() -> dbc.Card:
 def _strategy_config_card() -> dbc.Card:
     config_items = [
         ("polling_interval_s", "Polling Interval", "s", 5),
-        ("reaction_delay_s", "Reaction Delay", "s", 15),
-        ("spike_observation_period_s", "Spike Observation", "s", 90),
-        ("cooldown_period_s", "Cooldown", "s", 45),
-        ("min_change_threshold_w", "Min Change", "W", 30),
+        ("cooldown_period_s", "Cooldown", "s", 30),
+        ("min_change_threshold_w", "Min Change", "W", 20),
         ("emergency_threshold_w", "Emergency", "W", 500),
-        ("grid_target_w", "Grid Target", "W", -10),
+        ("grid_target_w", "Grid Target", "W", 0),
         ("max_load_w", "Max Load", "W", 800),
         ("min_load_w", "Min Load", "W", 0),
         ("load_step_w", "Load Step", "W", 10),

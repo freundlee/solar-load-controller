@@ -43,13 +43,13 @@ class StrategyDefaults:
     polling_interval_s: float = 5.0          # IOMeter read frequency
     reaction_delay_s: float = 15.0           # wait before reacting to sustained change
     spike_observation_period_s: float = 90.0 # observation window for spike classification
-    cooldown_period_s: float = 45.0          # mandatory wait after load change
+    cooldown_period_s: float = 30.0          # mandatory wait after load change
     rolling_window_s: float = 120.0          # meter-readings buffer length
 
     # Thresholds
-    min_change_threshold_w: float = 30.0     # hysteresis – ignore smaller changes
+    min_change_threshold_w: float = 20.0     # hysteresis – ignore smaller changes
     emergency_threshold_w: float = 500.0     # override cooldown for large spikes
-    grid_target_w: float = -10.0             # target meter reading (slightly export)
+    grid_target_w: float = 0.0             # target meter reading (zero grid)
 
     # Load limits (Anker SB2 hardware / German regulations)
     max_load_w: int = 800
