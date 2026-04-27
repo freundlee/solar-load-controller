@@ -136,9 +136,24 @@ async def toggle_auto_mode(request: Request, enabled: bool = True):
 
 @router.get("/meter-live")
 async def get_live_meter(request: Request, seconds: int = 300):
-    """Return recent in-memory readings (not from DB) for real-time charts."""
+    """Return recent readings for real-time charts.
+
+    Uses in-memory buffer for short windows; falls back to DB for longer ones.
+    """
     iometer, _, _ = _get_services(request)
     window = iometer.get_readings_window(seconds)
+
+    # In-memory buffer only holds ~16 min; for longer requests use DB
+    if seconds > 900 and len(window) < seconds / 10:
+        db_data = db.get_recent_meter_readings(seconds=seconds)
+        return [
+            {
+                "timestamp": r["timestamp"],
+                "power_w": round(r["power_w"], 1),
+            }
+            for r in db_data
+        ]
+
     return [
         {
             "timestamp": r.timestamp.isoformat(),
@@ -206,3 +221,13 @@ async def get_power_events(hours: int = 24):
 @router.get("/daily-energy")
 async def get_daily_energy(days: int = 30):
     return db.get_daily_energy(days=days)
+
+
+@router.get("/schedule")
+async def get_schedule(request: Request):
+    """Return the cached SB2 schedule (time-based load presets)."""
+    anker = request.app.state.anker
+    schedule = anker.schedule
+    if schedule is None:
+        return {"schedule": None, "message": "Schedule not loaded yet"}
+    return {"schedule": schedule}

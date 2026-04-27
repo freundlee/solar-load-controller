@@ -13,10 +13,8 @@ services:
       - IOMETER_HOST=${IOMETER_HOST:-192.168.178.96}
     volumes:
       - solar-data:/app/data
-    # Required for accessing local network devices (IOMeter)
-    network_mode: host
-    # If you prefer bridge mode + explicit ports, comment out network_mode
-    # and uncomment the ports mapping above, but ensure IOMeter is reachable.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   solar-data:

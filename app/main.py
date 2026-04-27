@@ -44,9 +44,31 @@ async def _anker_poller(anker: AnkerService, fast_interval: float = 30.0,
             # Run on first cycle (cycle==1) and then every slow_every cycles
             if cycle == 1 or cycle % slow_every == 0:
                 await anker.refresh_details()
+                # Persist daily energy to DB for historical chart
+                _persist_daily_energy(anker)
         except Exception as exc:
             logger.exception("Anker poller error: %s", exc)
         await asyncio.sleep(fast_interval)
+
+
+def _persist_daily_energy(anker: AnkerService) -> None:
+    """Save today's energy totals from Anker cloud to the daily_energy table."""
+    from datetime import date
+    today_str = date.today().isoformat()
+    data = {
+        "solar_production_wh": anker.today_solar_kwh * 1000,
+        "battery_charge_wh": anker.today_charge_kwh * 1000,
+        "battery_discharge_wh": anker.today_discharge_kwh * 1000,
+        "grid_import_wh": anker.today_grid_import_kwh * 1000,
+        "grid_export_wh": anker.today_grid_export_kwh * 1000,
+        "home_consumption_wh": anker.today_usage_kwh * 1000,
+    }
+    # Only persist if we have any data
+    if any(v > 0 for v in data.values()):
+        try:
+            db.upsert_daily_energy(today_str, data)
+        except Exception as exc:
+            logger.error("Failed to persist daily energy: %s", exc)
 
 
 # ---------------------------------------------------------------------------

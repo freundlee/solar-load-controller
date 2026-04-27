@@ -333,9 +333,20 @@ def _live_meter_chart_card() -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
             html.I(className="fas fa-wave-square me-2"),
-            "Live Grid (5 min)",
-        ], className="py-2"),
+            "Live Grid",
+            dbc.ButtonGroup([
+                dbc.Button("5m", id="live-range-5m", color="info", size="sm",
+                           outline=False, className="px-2 py-0"),
+                dbc.Button("15m", id="live-range-15m", color="info", size="sm",
+                           outline=True, className="px-2 py-0"),
+                dbc.Button("1h", id="live-range-1h", color="info", size="sm",
+                           outline=True, className="px-2 py-0"),
+                dbc.Button("3h", id="live-range-3h", color="info", size="sm",
+                           outline=True, className="px-2 py-0"),
+            ], size="sm", className="ms-auto"),
+        ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
+            dcc.Store(id="live-range-store", data=300),
             dcc.Graph(id="live-meter-chart", config={"displayModeBar": False},
                       style={"height": "200px"}),
         ], className="p-1"),
@@ -346,9 +357,20 @@ def _history_chart_card() -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
             html.I(className="fas fa-chart-line me-2"),
-            "Load & Meter (24h)",
-        ], className="py-2"),
+            "Load & Meter",
+            dbc.ButtonGroup([
+                dbc.Button("6h", id="history-range-6h", color="warning", size="sm",
+                           outline=True, className="px-2 py-0"),
+                dbc.Button("24h", id="history-range-24h", color="warning", size="sm",
+                           outline=False, className="px-2 py-0"),
+                dbc.Button("3d", id="history-range-3d", color="warning", size="sm",
+                           outline=True, className="px-2 py-0"),
+                dbc.Button("7d", id="history-range-7d", color="warning", size="sm",
+                           outline=True, className="px-2 py-0"),
+            ], size="sm", className="ms-auto"),
+        ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
+            dcc.Store(id="history-range-store", data=86400),
             dcc.Graph(id="history-chart", config={"displayModeBar": False},
                       style={"height": "250px"}),
         ], className="p-1"),
@@ -558,6 +580,30 @@ def _navbar() -> dbc.Navbar:
 # PAGE: Operations Dashboard
 # ===================================================================
 
+def _schedule_card() -> dbc.Card:
+    """Read-only display of SB2 time-based schedule (from Anker cloud)."""
+    return dbc.Card([
+        dbc.CardHeader(
+            html.Div([
+                html.I(className="fas fa-calendar-alt me-2"),
+                "Device Schedule",
+                html.Span(" (read-only)", className="text-muted small ms-1"),
+                html.I(className="fas fa-chevron-down ms-auto", id="schedule-chevron"),
+            ], className="d-flex align-items-center",
+               role="button", id="schedule-toggle"),
+            className="py-2",
+        ),
+        dbc.Collapse(
+            dbc.CardBody([
+                html.Div(id="schedule-content",
+                          children=html.Span("Loading...", className="text-muted small")),
+            ], className="p-2"),
+            id="schedule-collapse",
+            is_open=False,
+        ),
+    ], className="mb-3")
+
+
 def _operations_page() -> html.Div:
     return html.Div([
         _realtime_metrics_card(),
@@ -573,6 +619,7 @@ def _operations_page() -> html.Div:
         _daily_energy_chart_card(),
         _smart_plugs_card(),
         _iometer_status_card(),
+        _schedule_card(),
     ])
 
 

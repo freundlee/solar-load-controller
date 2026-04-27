@@ -58,6 +58,9 @@ class AnkerService:
 
         # Energy stats (today)
         self.today_solar_kwh: float = 0.0
+
+        # Schedule (cached from device data)
+        self.schedule: dict | None = None
         self.today_charge_kwh: float = 0.0
         self.today_discharge_kwh: float = 0.0
         self.today_usage_kwh: float = 0.0
@@ -169,6 +172,9 @@ class AnkerService:
                 if sn == self._device_sn:
                     preset = device.get("preset_system_output_power", 0)
                     self.current_load_w = int(float(preset or 0))
+                    # Cache schedule from device data
+                    if "schedule" in device:
+                        self.schedule = device["schedule"]
 
             # Operating mode
             mode = site.get("scene_mode")
@@ -341,4 +347,5 @@ class AnkerService:
             "site_id": self._site_id,
             "device_sn": self._device_sn,
             "initialized": self._initialized,
+            "schedule": self.schedule,
         }

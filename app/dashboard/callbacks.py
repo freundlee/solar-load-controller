@@ -331,11 +331,45 @@ def register_callbacks(app: dash.Dash) -> None:
     # -------------------------------------------------------------------
 
     @app.callback(
-        Output("live-meter-chart", "figure"),
-        Input("interval-medium", "n_intervals"),
+        Output("live-range-store", "data"),
+        [Input("live-range-5m", "n_clicks"),
+         Input("live-range-15m", "n_clicks"),
+         Input("live-range-1h", "n_clicks"),
+         Input("live-range-3h", "n_clicks")],
+        prevent_initial_call=True,
     )
-    def update_live_meter_chart(_n):
-        data = _api_get("/meter-live?seconds=300") or []
+    def set_live_range(n5, n15, n1h, n3h):
+        ctx = callback_context
+        if not ctx.triggered:
+            return no_update
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        ranges = {
+            "live-range-5m": 300,
+            "live-range-15m": 900,
+            "live-range-1h": 3600,
+            "live-range-3h": 10800,
+        }
+        return ranges.get(btn_id, 300)
+
+    @app.callback(
+        [Output("live-range-5m", "outline"),
+         Output("live-range-15m", "outline"),
+         Output("live-range-1h", "outline"),
+         Output("live-range-3h", "outline")],
+        Input("live-range-store", "data"),
+    )
+    def update_live_btn_style(seconds):
+        active = {300: 0, 900: 1, 3600: 2, 10800: 3}.get(seconds, 0)
+        return [i != active for i in range(4)]
+
+    @app.callback(
+        Output("live-meter-chart", "figure"),
+        [Input("interval-medium", "n_intervals"),
+         Input("live-range-store", "data")],
+    )
+    def update_live_meter_chart(_n, seconds):
+        seconds = seconds or 300
+        data = _api_get(f"/meter-live?seconds={seconds}") or []
 
         fig = go.Figure()
 
@@ -354,16 +388,51 @@ def register_callbacks(app: dash.Dash) -> None:
         return fig
 
     # -------------------------------------------------------------------
-    # 6. History chart (10s refresh — from DB)
+    # 6. History chart (range-selectable — from DB)
     # -------------------------------------------------------------------
 
     @app.callback(
-        Output("history-chart", "figure"),
-        Input("interval-medium", "n_intervals"),
+        Output("history-range-store", "data"),
+        [Input("history-range-6h", "n_clicks"),
+         Input("history-range-24h", "n_clicks"),
+         Input("history-range-3d", "n_clicks"),
+         Input("history-range-7d", "n_clicks")],
+        prevent_initial_call=True,
     )
-    def update_history_chart(_n):
-        load_data = _api_get("/load-history?hours=24") or []
-        meter_data = _api_get("/meter-history?seconds=86400") or []
+    def set_history_range(n6, n24, n3d, n7d):
+        ctx = callback_context
+        if not ctx.triggered:
+            return no_update
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        ranges = {
+            "history-range-6h": 21600,
+            "history-range-24h": 86400,
+            "history-range-3d": 259200,
+            "history-range-7d": 604800,
+        }
+        return ranges.get(btn_id, 86400)
+
+    @app.callback(
+        [Output("history-range-6h", "outline"),
+         Output("history-range-24h", "outline"),
+         Output("history-range-3d", "outline"),
+         Output("history-range-7d", "outline")],
+        Input("history-range-store", "data"),
+    )
+    def update_history_btn_style(seconds):
+        active = {21600: 0, 86400: 1, 259200: 2, 604800: 3}.get(seconds, 1)
+        return [i != active for i in range(4)]
+
+    @app.callback(
+        Output("history-chart", "figure"),
+        [Input("interval-medium", "n_intervals"),
+         Input("history-range-store", "data")],
+    )
+    def update_history_chart(_n, seconds):
+        seconds = seconds or 86400
+        hours = seconds // 3600
+        load_data = _api_get(f"/load-history?hours={hours}") or []
+        meter_data = _api_get(f"/meter-history?seconds={seconds}") or []
 
         fig = go.Figure()
 
@@ -781,3 +850,103 @@ def register_callbacks(app: dash.Dash) -> None:
                 msg += f" ({host})"
             return dbc.Alert(msg, color="success", duration=4000)
         return dbc.Alert("Save failed", color="danger", duration=4000)
+
+    # ------------------------------------------------------------------
+    # 18. Device schedule — collapse toggle + read-only display
+    # ------------------------------------------------------------------
+
+    @app.callback(
+        Output("schedule-collapse", "is_open"),
+        Input("schedule-toggle", "n_clicks"),
+        State("schedule-collapse", "is_open"),
+        prevent_initial_call=True,
+    )
+    def toggle_schedule(n_clicks, is_open):
+        if n_clicks:
+            return not is_open
+        return is_open
+
+    @app.callback(
+        Output("schedule-content", "children"),
+        Input("interval-slow", "n_intervals"),
+    )
+    def render_schedule(_n):
+        data = _api_get("/schedule")
+        if data is None or data.get("schedule") is None:
+            return html.Span("Schedule not available", className="text-muted small")
+
+        schedule = data["schedule"]
+
+        # Weekday mapping
+        day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+        # Parse SB2 schedule format: custom_rate_plan / blend_plan
+        sections = []
+
+        # Mode type
+        mode_type = schedule.get("mode_type")
+        mode_labels = {1: "Smart Match", 2: "Time of Use", 3: "Manual"}
+        mode_name = mode_labels.get(mode_type, f"Mode {mode_type}")
+        default_load = schedule.get("default_home_load", "?")
+        load_range = f"{schedule.get('min_load', 0)}–{schedule.get('max_load', 800)}W"
+
+        sections.append(
+            dbc.Row([
+                dbc.Col([
+                    html.Span("Mode: ", className="text-muted small"),
+                    html.Span(mode_name, className="small fw-bold"),
+                ], xs=4),
+                dbc.Col([
+                    html.Span("Default: ", className="text-muted small"),
+                    html.Span(f"{default_load}W", className="small fw-bold"),
+                ], xs=4),
+                dbc.Col([
+                    html.Span("Range: ", className="text-muted small"),
+                    html.Span(load_range, className="small"),
+                ], xs=4),
+            ], className="mb-2")
+        )
+
+        # Render plan groups
+        for plan_key, plan_label in [
+            ("custom_rate_plan", "Custom Plan"),
+            ("blend_plan", "Blend Plan"),
+        ]:
+            plan = schedule.get(plan_key)
+            if not plan:
+                continue
+
+            sections.append(html.Hr(className="my-2"))
+            sections.append(html.Div(plan_label, className="small fw-bold mb-1"))
+
+            for group in plan:
+                week_days = group.get("week", [])
+                day_str = ", ".join(day_names[d] for d in week_days if 0 <= d < 7)
+                ranges = group.get("ranges", [])
+
+                rows = []
+                for slot in ranges:
+                    start = slot.get("start_time", "?")
+                    end = slot.get("end_time", "?")
+                    power = slot.get("power", "?")
+                    rows.append(
+                        html.Div([
+                            html.Span(f"  {start}–{end}: ",
+                                      className="small text-muted",
+                                      style={"fontFamily": "monospace"}),
+                            html.Span(f"{power}W",
+                                      className="small fw-bold text-warning"),
+                        ])
+                    )
+
+                sections.append(
+                    dbc.Card(
+                        dbc.CardBody([
+                            html.Div(day_str, className="small fw-bold text-info"),
+                            *rows,
+                        ], className="p-1"),
+                        className="mb-1 bg-dark border-secondary",
+                    )
+                )
+
+        return html.Div(sections)
