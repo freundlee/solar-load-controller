@@ -16,6 +16,7 @@ from app.config import anker_cfg, iometer_cfg
 from app.services.iometer_service import IOMeterService
 from app.services.anker_service import AnkerService
 from app.services.strategy_engine import StrategyEngine
+from app.services.weather_service import WeatherService
 from app.routes.api_routes import router as api_router
 from app.routes.esp32_routes import router as esp32_router
 
@@ -52,16 +53,32 @@ async def _anker_poller(anker: AnkerService, fast_interval: float = 30.0,
 
 
 def _persist_daily_energy(anker: AnkerService) -> None:
-    """Save today's energy totals from Anker cloud to the daily_energy table."""
+    """Save today's energy totals from Anker cloud to the daily_energy table.
+
+    Grid import/export from the Anker cloud API is often 0 (Anker doesn't
+    read the smart meter directly).  Preserve any meter-derived values that
+    the EnergyTracker already wrote so they don't get overwritten with 0.
+    """
     from datetime import date
     today_str = date.today().isoformat()
+
+    # Read existing row so we can preserve meter-based import/export
+    existing = db.get_daily_energy_for_date(today_str) or {}
+
+    anker_import = anker.today_grid_import_kwh * 1000
+    anker_export = anker.today_grid_export_kwh * 1000
+
     data = {
         "solar_production_wh": anker.today_solar_kwh * 1000,
         "battery_charge_wh": anker.today_charge_kwh * 1000,
         "battery_discharge_wh": anker.today_discharge_kwh * 1000,
-        "grid_import_wh": anker.today_grid_import_kwh * 1000,
-        "grid_export_wh": anker.today_grid_export_kwh * 1000,
-        "home_consumption_wh": anker.today_usage_kwh * 1000,
+        # Keep the larger of Anker cloud value vs existing meter-derived value
+        "grid_import_wh": max(anker_import, existing.get("grid_import_wh", 0)),
+        "grid_export_wh": max(anker_export, existing.get("grid_export_wh", 0)),
+        "home_consumption_wh": max(
+            anker.today_usage_kwh * 1000,
+            existing.get("home_consumption_wh", 0),
+        ),
     }
     # Only persist if we have any data
     if any(v > 0 for v in data.values()):
@@ -69,6 +86,19 @@ def _persist_daily_energy(anker: AnkerService) -> None:
             db.upsert_daily_energy(today_str, data)
         except Exception as exc:
             logger.error("Failed to persist daily energy: %s", exc)
+
+
+async def _weather_poller(weather: WeatherService, strategy: StrategyEngine) -> None:
+    """Refresh weather forecast every hour and feed to strategy engine."""
+    while True:
+        try:
+            forecast = await weather.get_forecast()
+            if forecast:
+                strategy.weather_forecast = forecast
+                logger.debug("Weather forecast updated: %s", forecast)
+        except Exception as exc:
+            logger.warning("Weather poller error: %s", exc)
+        await asyncio.sleep(3600)  # once per hour
 
 
 # ---------------------------------------------------------------------------
@@ -87,16 +117,19 @@ async def lifespan(app: FastAPI):
 
     # Database
     db.init_db()
+    db.backfill_daily_energy_from_readings()
 
     # Services
     iometer = IOMeterService()
     anker = AnkerService()
     strategy = StrategyEngine(iometer, anker)
+    weather = WeatherService()
 
     # Attach to app.state so routes can access them
     app.state.iometer = iometer
     app.state.anker = anker
     app.state.strategy = strategy
+    app.state.weather = weather
 
     # Initialize Anker API (non-blocking — will retry if fails)
     try:
@@ -109,6 +142,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(iometer.start_polling(), name="iometer_poller"),
         asyncio.create_task(_anker_poller(anker), name="anker_poller"),
         asyncio.create_task(strategy.start(), name="strategy_engine"),
+        asyncio.create_task(_weather_poller(weather, strategy), name="weather_poller"),
     ]
 
     # Also fetch IOMeter status once on startup
@@ -127,6 +161,7 @@ async def lifespan(app: FastAPI):
     await asyncio.gather(*tasks, return_exceptions=True)
     await iometer.close()
     await anker.close()
+    await weather.close()
     logger.info("Shutdown complete")
 
 

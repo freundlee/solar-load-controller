@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import database as db
+from app.services.strategies import list_strategies
 
 logger = logging.getLogger(__name__)
 
@@ -231,3 +232,92 @@ async def get_schedule(request: Request):
     if schedule is None:
         return {"schedule": None, "message": "Schedule not loaded yet"}
     return {"schedule": schedule}
+
+
+# ---------------------------------------------------------------------------
+# Strategy management
+# ---------------------------------------------------------------------------
+
+class StrategyChangeRequest(BaseModel):
+    strategy: str = Field(description="Strategy name to activate")
+
+
+@router.get("/strategies")
+async def get_strategies(request: Request):
+    """List all available strategies and the currently active one."""
+    _, _, strategy = _get_services(request)
+    return {
+        "active": strategy.active_strategy_name,
+        "available": list_strategies(),
+    }
+
+
+@router.post("/strategies")
+async def set_strategy(req: StrategyChangeRequest, request: Request):
+    """Switch the active strategy."""
+    _, _, strategy = _get_services(request)
+    if strategy.set_strategy(req.strategy):
+        return {"success": True, "active": strategy.active_strategy_name}
+    raise HTTPException(400, f"Unknown strategy: {req.strategy}")
+
+
+# ---------------------------------------------------------------------------
+# Historical analytics
+# ---------------------------------------------------------------------------
+
+@router.get("/analytics/hourly")
+async def get_hourly_analytics(days: int = 7):
+    """Per-hour average meter power and load over recent days."""
+    return db.get_hourly_stats(days_back=days)
+
+
+@router.get("/analytics/daily")
+async def get_daily_analytics(days: int = 30):
+    """Daily energy comparison data."""
+    return db.get_daily_comparison(days=days)
+
+
+@router.get("/analytics/weekly")
+async def get_weekly_analytics(weeks: int = 12):
+    """Weekly aggregated energy summary."""
+    return db.get_weekly_summary(weeks=weeks)
+
+
+@router.get("/analytics/monthly")
+async def get_monthly_analytics(months: int = 12):
+    """Monthly aggregated energy summary."""
+    return db.get_monthly_summary(months=months)
+
+
+@router.get("/analytics/period")
+async def get_period_analytics(start: str, end: str):
+    """Meter stats for a custom date range (ISO dates: YYYY-MM-DD)."""
+    stats = db.get_meter_stats_for_period(start, end)
+    if stats is None:
+        return {"message": "No data for this period"}
+    return stats
+
+
+# ---------------------------------------------------------------------------
+# Weather forecast
+# ---------------------------------------------------------------------------
+
+@router.get("/weather")
+async def get_weather(request: Request):
+    """Get cached weather forecast for solar optimization."""
+    weather = getattr(request.app.state, "weather", None)
+    if weather is None:
+        return {"forecast": None, "message": "Weather service not available"}
+    forecast = await weather.get_forecast()
+    return {"forecast": forecast}
+
+
+# ---------------------------------------------------------------------------
+# Energy tracking (calculated from meter readings)
+# ---------------------------------------------------------------------------
+
+@router.get("/energy/today")
+async def get_energy_today(request: Request):
+    """Get today's calculated import/export energy from meter readings."""
+    _, _, strategy = _get_services(request)
+    return strategy.get_status().get("energy", {})

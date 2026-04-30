@@ -197,20 +197,20 @@ def _manual_control_card() -> dbc.Card:
             dbc.Row([
                 dbc.Col(
                     dbc.Button("Set", id="btn-set-load", color="primary",
-                               className="w-100", size="sm"),
+                               className="w-100 py-2"),
                     xs=4,
                 ),
                 dbc.Col(
                     dbc.Button("800W", id="btn-max-load", color="warning",
-                               className="w-100", size="sm"),
+                               className="w-100 py-2"),
                     xs=4,
                 ),
                 dbc.Col(
                     dbc.Button("0W", id="btn-min-load", color="secondary",
-                               className="w-100", size="sm"),
+                               className="w-100 py-2"),
                     xs=4,
                 ),
-            ], className="g-1"),
+            ], className="g-2"),
             html.Div(id="load-status-msg", className="mt-2"),
             # Hidden display for slider value
             html.Span(id="load-slider-display", style={"display": "none"}),
@@ -223,25 +223,53 @@ def _auto_status_card() -> dbc.Card:
         dbc.CardHeader([
             html.I(className="fas fa-robot me-2"),
             "Auto Control",
-        ], className="py-2"),
+            html.Span(id="strategy-change-status", className="ms-2"),
+        ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
+            # Strategy selector
             dbc.Row([
+                dbc.Col([
+                    html.Div("Strategy", className="text-muted small"),
+                    dbc.Select(
+                        id="strategy-selector",
+                        options=[
+                            {"label": "Proportional", "value": "proportional"},
+                            {"label": "Conservative", "value": "conservative"},
+                            {"label": "Smoothing", "value": "smoothing"},
+                            {"label": "Battery Guard", "value": "battery_guard"},
+                            {"label": "Predictive", "value": "predictive"},
+                        ],
+                        value="proportional",
+                        size="sm",
+                        className="bg-dark text-light border-secondary",
+                    ),
+                ], xs=8),
                 dbc.Col([
                     html.Div("State", className="text-muted small"),
                     html.Div("--", id="strategy-state", className="fw-bold"),
-                ], xs=6, md=3),
+                ], xs=4),
+            ], className="g-2 mb-1"),
+            # Strategy description & decision reasoning
+            html.Div("--", id="strategy-description",
+                      className="small text-muted fst-italic mb-1"),
+            html.Div([
+                html.I(className="fas fa-brain me-1 text-info", style={"fontSize": "0.7rem"}),
+                html.Span("--", id="strategy-decision-notes", className="small text-info"),
+            ], className="mb-1"),
+            html.Hr(className="my-2"),
+            dbc.Row([
                 dbc.Col([
                     html.Div("Adjustments", className="text-muted small"),
                     html.Div("--", id="strategy-adjustments", className="fw-bold"),
-                ], xs=6, md=3),
+                ], xs=4, md=3),
                 dbc.Col([
                     html.Div("Spikes", className="text-muted small"),
                     html.Div("--", id="strategy-spikes", className="fw-bold"),
-                ], xs=6, md=3),
+                ], xs=4, md=3),
                 dbc.Col([
                     html.Div("Ignored", className="text-muted small"),
                     html.Div("--", id="strategy-ignored", className="fw-bold"),
-                ], xs=6, md=3),
+                ], xs=4, md=3),
             ], className="g-2 mb-2"),
             html.Hr(className="my-2"),
             dbc.Row([
@@ -268,6 +296,25 @@ def _auto_status_card() -> dbc.Card:
             html.Div([
                 html.Span("Plugs: ", className="text-muted small"),
                 html.Span("--", id="strategy-current-spike", className="small"),
+            ]),
+            # Energy tracking display
+            html.Hr(className="my-2"),
+            dbc.Row([
+                dbc.Col([
+                    html.Span("Import: ", className="text-muted small"),
+                    html.Span("--", id="energy-import-today", className="fw-bold small text-danger"),
+                    html.Span(" kWh", className="text-muted small"),
+                ], xs=4),
+                dbc.Col([
+                    html.Span("Export: ", className="text-muted small"),
+                    html.Span("--", id="energy-export-today", className="fw-bold small text-success"),
+                    html.Span(" kWh", className="text-muted small"),
+                ], xs=4),
+                dbc.Col([
+                    html.Span("Home: ", className="text-muted small"),
+                    html.Span("--", id="energy-consumption-today", className="fw-bold small text-info"),
+                    html.Span(" kWh", className="text-muted small"),
+                ], xs=4),
             ]),
         ], className="p-2"),
     ], className="mb-3")
@@ -336,56 +383,106 @@ def _live_meter_chart_card() -> dbc.Card:
             "Live Grid",
             dbc.ButtonGroup([
                 dbc.Button("5m", id="live-range-5m", color="info", size="sm",
-                           outline=False, className="px-2 py-0"),
+                           outline=False, className="px-2 py-1"),
                 dbc.Button("15m", id="live-range-15m", color="info", size="sm",
-                           outline=True, className="px-2 py-0"),
+                           outline=True, className="px-2 py-1"),
                 dbc.Button("1h", id="live-range-1h", color="info", size="sm",
-                           outline=True, className="px-2 py-0"),
+                           outline=True, className="px-2 py-1"),
                 dbc.Button("3h", id="live-range-3h", color="info", size="sm",
-                           outline=True, className="px-2 py-0"),
+                           outline=True, className="px-2 py-1"),
             ], size="sm", className="ms-auto"),
         ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
             dcc.Store(id="live-range-store", data=300),
-            dcc.Graph(id="live-meter-chart", config={"displayModeBar": False},
-                      style={"height": "200px"}),
+            dcc.Graph(id="live-meter-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "220px"}),
         ], className="p-1"),
     ], className="mb-3")
 
 
-def _history_chart_card() -> dbc.Card:
+def _balance_chart_card() -> dbc.Card:
+    """Load vs Grid balance chart — shows when load offsets grid import."""
     return dbc.Card([
         dbc.CardHeader([
-            html.I(className="fas fa-chart-line me-2"),
-            "Load & Meter",
+            html.I(className="fas fa-scale-balanced me-2"),
+            "Load ↔ Grid Balance",
             dbc.ButtonGroup([
-                dbc.Button("6h", id="history-range-6h", color="warning", size="sm",
-                           outline=True, className="px-2 py-0"),
-                dbc.Button("24h", id="history-range-24h", color="warning", size="sm",
-                           outline=False, className="px-2 py-0"),
-                dbc.Button("3d", id="history-range-3d", color="warning", size="sm",
-                           outline=True, className="px-2 py-0"),
-                dbc.Button("7d", id="history-range-7d", color="warning", size="sm",
-                           outline=True, className="px-2 py-0"),
+                dbc.Button("6h", id="balance-range-6h", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("24h", id="balance-range-24h", color="success", size="sm",
+                           outline=False, className="px-2 py-1"),
+                dbc.Button("3d", id="balance-range-3d", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("7d", id="balance-range-7d", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
             ], size="sm", className="ms-auto"),
         ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
-            dcc.Store(id="history-range-store", data=86400),
-            dcc.Graph(id="history-chart", config={"displayModeBar": False},
-                      style={"height": "250px"}),
+            dcc.Store(id="balance-range-store", data=86400),
+            # Summary stats row
+            dbc.Row([
+                dbc.Col([
+                    html.Span("Self-sufficient ", className="text-muted small"),
+                    html.Span("--", id="balance-self-pct",
+                              className="fw-bold text-success small"),
+                ], xs=4, className="text-center"),
+                dbc.Col([
+                    html.Span("Import ", className="text-muted small"),
+                    html.Span("--", id="balance-import-dur",
+                              className="fw-bold text-danger small"),
+                ], xs=4, className="text-center"),
+                dbc.Col([
+                    html.Span("Export ", className="text-muted small"),
+                    html.Span("--", id="balance-export-dur",
+                              className="fw-bold text-success small"),
+                ], xs=4, className="text-center"),
+            ], className="mb-2 mt-1"),
+            dcc.Graph(id="balance-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "300px"}),
         ], className="p-1"),
     ], className="mb-3")
 
 
 def _daily_energy_chart_card() -> dbc.Card:
-    """Daily energy bar chart - solar production, home usage, grid export."""
+    """Daily energy flow – diverging stacked bars + self-sufficiency line."""
     return dbc.Card([
         dbc.CardHeader([
-            html.I(className="fas fa-chart-column me-2"),
-            "Daily Energy (30 days)",
+            html.I(className="fas fa-bolt me-2"),
+            "Energy Flow (30 days)",
         ], className="py-2"),
         dbc.CardBody([
-            dcc.Graph(id="daily-energy-chart", config={"displayModeBar": False},
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Self-use", className="text-muted small"),
+                    html.Span("--", id="daily-energy-selfuse",
+                              className="fw-bold text-success small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Self-sufficiency", className="text-muted small"),
+                    html.Span("--", id="daily-energy-ss-pct",
+                              className="fw-bold text-warning small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Grid Import", className="text-muted small"),
+                    html.Span("--", id="daily-energy-import",
+                              className="fw-bold text-danger small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Grid Export", className="text-muted small"),
+                    html.Span("--", id="daily-energy-export",
+                              className="fw-bold text-info small"),
+                ], xs=3, className="text-center"),
+            ], className="mb-1 g-1"),
+            dcc.Graph(id="daily-energy-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
                       style={"height": "280px"}),
         ], className="p-1"),
     ], className="mb-3")
@@ -451,23 +548,41 @@ def _iometer_status_card() -> dbc.Card:
 
 def _strategy_config_card() -> dbc.Card:
     config_items = [
-        ("polling_interval_s", "Polling Interval", "s", 5),
-        ("cooldown_period_s", "Cooldown", "s", 30),
-        ("min_change_threshold_w", "Min Change", "W", 20),
-        ("emergency_threshold_w", "Emergency", "W", 500),
-        ("grid_target_w", "Grid Target", "W", 0),
-        ("max_load_w", "Max Load", "W", 800),
-        ("min_load_w", "Min Load", "W", 0),
-        ("load_step_w", "Load Step", "W", 10),
-        ("electricity_price_eur_kwh", "Elec. Price", "€/kWh", 0.28),
-        ("feed_in_tariff_eur_kwh", "Feed-in Tariff", "€/kWh", 0.082),
+        ("polling_interval_s", "Polling Interval", "s", 5,
+         "How often the meter is read and the control loop runs"),
+        ("cooldown_period_s", "Cooldown", "s", 30,
+         "Minimum wait time between two consecutive load adjustments"),
+        ("min_change_threshold_w", "Min Change", "W", 20,
+         "Hysteresis – ignore grid deviations smaller than this value"),
+        ("emergency_threshold_w", "Emergency", "W", 500,
+         "Override cooldown if grid deviation exceeds this threshold"),
+        ("grid_target_w", "Grid Target", "W", 0,
+         "Target meter reading; 0 = zero grid, negative = slight export"),
+        ("max_load_w", "Max Load", "W", 800,
+         "Maximum inverter output (German 800 W micro-inverter limit)"),
+        ("min_load_w", "Min Load", "W", 0,
+         "Minimum inverter output; set > 0 to keep a base load running"),
+        ("load_step_w", "Load Step", "W", 10,
+         "Smallest increment for load adjustments (Anker SB2 resolution)"),
+        ("electricity_price_eur_kwh", "Elec. Price", "€/kWh", 0.28,
+         "Grid electricity price, used for cost/savings calculations"),
+        ("feed_in_tariff_eur_kwh", "Feed-in Tariff", "€/kWh", 0.082,
+         "Feed-in tariff (Einspeisevergütung) for exported energy"),
     ]
 
     rows = []
-    for key, label, unit, default in config_items:
+    for key, label, unit, default, desc in config_items:
+        row_id = f"cfg-tip-{key}"
         rows.append(
             dbc.Row([
-                dbc.Col(html.Label(f"{label} ({unit})", className="small"), xs=5),
+                dbc.Col([
+                    html.Label([
+                        f"{label} ({unit}) ",
+                        html.I(className="fas fa-info-circle text-muted",
+                               id=row_id, style={"cursor": "pointer", "fontSize": "0.75rem"}),
+                    ], className="small mb-0"),
+                    dbc.Tooltip(desc, target=row_id, placement="right"),
+                ], xs=5),
                 dbc.Col(
                     dbc.Input(
                         id={"type": "config-input", "key": key},
@@ -504,39 +619,6 @@ def _strategy_config_card() -> dbc.Card:
     ], className="mb-3")
 
 
-def _profiles_card() -> dbc.Card:
-    return dbc.Card([
-        dbc.CardHeader([
-            html.I(className="fas fa-plug me-2"),
-            "Appliance Profiles",
-        ], className="py-2"),
-        dbc.CardBody([
-            html.Div(id="profiles-table"),
-            html.Hr(className="my-2"),
-            html.H6("Add / Edit Profile", className="mt-2 small"),
-            dbc.Row([
-                dbc.Col(dbc.Input(id="profile-name", placeholder="Name", size="sm",
-                                  className="bg-dark text-light border-secondary"), xs=6, md=2),
-                dbc.Col(dbc.Input(id="profile-min-w", placeholder="Min W", type="number",
-                                  size="sm", className="bg-dark text-light border-secondary"), xs=3, md=2),
-                dbc.Col(dbc.Input(id="profile-max-w", placeholder="Max W", type="number",
-                                  size="sm", className="bg-dark text-light border-secondary"), xs=3, md=2),
-                dbc.Col(dbc.Input(id="profile-typ-dur", placeholder="Dur (s)", type="number",
-                                  size="sm", className="bg-dark text-light border-secondary"), xs=4, md=2),
-                dbc.Col(dbc.Select(id="profile-action", options=[
-                    {"label": "Ignore", "value": "ignore"},
-                    {"label": "Observe", "value": "observe"},
-                    {"label": "Adjust", "value": "adjust"},
-                ], value="observe", size="sm",
-                    className="bg-dark text-light border-secondary"), xs=4, md=2),
-                dbc.Col(dbc.Button("Add", id="btn-add-profile", color="success",
-                                   size="sm", className="w-100"), xs=4, md=2),
-            ], className="g-1"),
-            html.Div(id="profile-status-msg", className="mt-2"),
-        ], className="p-2"),
-    ], className="mb-3")
-
-
 def _recent_events_card() -> dbc.Card:
     return dbc.Card([
         dbc.CardHeader([
@@ -563,10 +645,12 @@ def _navbar() -> dbc.Navbar:
             ], className="fs-5"),
             dbc.Nav([
                 dbc.NavItem(dbc.NavLink("Dashboard", href="/dashboard/", active="exact",
-                                         className="py-1 px-2")),
+                                         className="py-2 px-3")),
+                dbc.NavItem(dbc.NavLink("Analytics", href="/dashboard/analytics", active="exact",
+                                         className="py-2 px-3")),
                 dbc.NavItem(dbc.NavLink("Admin", href="/dashboard/admin", active="exact",
-                                         className="py-1 px-2")),
-                dbc.NavItem(html.Span(id="header-time", className="text-muted nav-link py-1 px-2 small")),
+                                         className="py-2 px-3")),
+                dbc.NavItem(html.Span(id="header-time", className="text-muted nav-link py-2 px-2 small")),
             ], navbar=True, className="ms-auto"),
         ], fluid=True),
         color="dark",
@@ -615,7 +699,7 @@ def _operations_page() -> html.Div:
         ]),
         _daily_summary_card(),
         _live_meter_chart_card(),
-        _history_chart_card(),
+        _balance_chart_card(),
         _daily_energy_chart_card(),
         _smart_plugs_card(),
         _iometer_status_card(),
@@ -723,10 +807,233 @@ def _admin_page() -> html.Div:
 
         dbc.Row([
             dbc.Col(_strategy_config_card(), xs=12, lg=6),
-            dbc.Col(_profiles_card(), xs=12, lg=6),
         ]),
 
         _recent_events_card(),
+    ])
+
+
+# ===================================================================
+# PAGE: Analytics (historical comparisons)
+# ===================================================================
+
+def _hourly_pattern_card() -> dbc.Card:
+    """Shows average consumption pattern by hour of day."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-clock me-2"),
+            "Hourly Pattern (7-day avg)",
+        ], className="py-2"),
+        dbc.CardBody([
+            dcc.Graph(id="hourly-pattern-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "250px"}),
+        ], className="p-1"),
+    ], className="mb-3")
+
+
+def _daily_comparison_card() -> dbc.Card:
+    """Daily energy area chart – layered energy flow with self-sufficiency."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-layer-group me-2"),
+            "Daily Energy Flow",
+            dbc.ButtonGroup([
+                dbc.Button("7d", id="daily-comp-7d", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("14d", id="daily-comp-14d", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("30d", id="daily-comp-30d", color="success", size="sm",
+                           outline=False, className="px-2 py-1"),
+                dbc.Button("90d", id="daily-comp-90d", color="success", size="sm",
+                           outline=True, className="px-2 py-1"),
+            ], size="sm", className="ms-auto"),
+        ], className="py-2 d-flex align-items-center"),
+        dbc.CardBody([
+            dcc.Store(id="daily-comp-range-store", data=30),
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Avg Solar/d", className="text-muted small"),
+                    html.Span("--", id="daily-comp-avg-solar",
+                              className="fw-bold text-warning small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Avg SS%", className="text-muted small"),
+                    html.Span("--", id="daily-comp-avg-ss",
+                              className="fw-bold text-success small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Total Import", className="text-muted small"),
+                    html.Span("--", id="daily-comp-import",
+                              className="fw-bold text-danger small"),
+                ], xs=3, className="text-center"),
+                dbc.Col([
+                    html.Div("Net Cost", className="text-muted small"),
+                    html.Span("--", id="daily-comp-net-cost",
+                              className="fw-bold text-info small"),
+                ], xs=3, className="text-center"),
+            ], className="mb-1 g-1"),
+            dcc.Graph(id="daily-comparison-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "340px"}),
+        ], className="p-1"),
+    ], className="mb-3")
+
+
+def _weekly_summary_card() -> dbc.Card:
+    """Weekly horizontal diverging bars with self-sufficiency annotations."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-calendar-week me-2"),
+            "Weekly Balance",
+        ], className="py-2"),
+        dbc.CardBody([
+            dcc.Graph(id="weekly-summary-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "360px"}),
+        ], className="p-1"),
+    ], className="mb-3")
+
+
+def _monthly_summary_card() -> dbc.Card:
+    """Monthly summary with indicator gauges and stacked area trend."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-calendar me-2"),
+            "Monthly Overview",
+        ], className="py-2"),
+        dbc.CardBody([
+            dcc.Graph(id="monthly-summary-chart",
+                      config={"displayModeBar": "hover", "scrollZoom": False,
+                              "modeBarButtonsToRemove": ["lasso2d", "select2d", "toImage"],
+                              "displaylogo": False},
+                      style={"height": "420px"}),
+        ], className="p-1"),
+    ], className="mb-3")
+
+
+def _weather_forecast_card() -> dbc.Card:
+    """7-day weather forecast with PV generation estimate."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-cloud-sun me-2"),
+            "7-Day Solar Forecast",
+        ], className="py-2"),
+        dbc.CardBody([
+            # Summary row (today + tomorrow highlights)
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Today Sun", className="text-muted small"),
+                    html.Div([
+                        html.Span("--", id="weather-today-hours", className="fw-bold text-warning"),
+                        html.Span(" hrs", className="text-muted small"),
+                    ]),
+                ], xs=3),
+                dbc.Col([
+                    html.Div("Tomorrow Sun", className="text-muted small"),
+                    html.Div([
+                        html.Span("--", id="weather-tomorrow-hours", className="fw-bold text-warning"),
+                        html.Span(" hrs", className="text-muted small"),
+                    ]),
+                ], xs=3),
+                dbc.Col([
+                    html.Div("Cloud", className="text-muted small"),
+                    html.Div([
+                        html.Span("--", id="weather-cloud-cover", className="fw-bold text-info"),
+                        html.Span("%", className="text-muted small"),
+                    ]),
+                ], xs=3),
+                dbc.Col([
+                    html.Div("Outlook", className="text-muted small"),
+                    html.Div([
+                        html.Span("--", id="weather-outlook", className="fw-bold"),
+                    ]),
+                ], xs=3),
+            ], className="g-2 mb-2"),
+            html.Hr(className="my-2"),
+            # 7-day forecast table
+            html.Div(id="weather-7day-table"),
+            # Generation bar chart
+            dcc.Graph(id="weather-generation-chart",
+                      config={"displayModeBar": False, "scrollZoom": False},
+                      style={"height": "180px"}),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
+def _daily_detail_table_card() -> dbc.Card:
+    """Detailed daily energy statistics table with costs."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-table me-2"),
+            "Daily Detail",
+            dbc.ButtonGroup([
+                dbc.Button("7d", id="detail-range-7d", color="info", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("14d", id="detail-range-14d", color="info", size="sm",
+                           outline=True, className="px-2 py-1"),
+                dbc.Button("30d", id="detail-range-30d", color="info", size="sm",
+                           outline=False, className="px-2 py-1"),
+                dbc.Button("90d", id="detail-range-90d", color="info", size="sm",
+                           outline=True, className="px-2 py-1"),
+            ], size="sm", className="ms-auto"),
+        ], className="py-2 d-flex align-items-center"),
+        dbc.CardBody([
+            dcc.Store(id="detail-range-store", data=30),
+            # Summary totals row
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Total Solar", className="text-muted small"),
+                    html.Span("--", id="detail-total-solar", className="fw-bold text-warning"),
+                ], xs=4, md=2, className="text-center mb-1"),
+                dbc.Col([
+                    html.Div("Self-use", className="text-muted small"),
+                    html.Span("--", id="detail-total-selfuse", className="fw-bold text-success"),
+                ], xs=4, md=2, className="text-center mb-1"),
+                dbc.Col([
+                    html.Div("Import", className="text-muted small"),
+                    html.Span("--", id="detail-total-import", className="fw-bold text-danger"),
+                ], xs=4, md=2, className="text-center mb-1"),
+                dbc.Col([
+                    html.Div("Export", className="text-muted small"),
+                    html.Span("--", id="detail-total-export", className="fw-bold text-info"),
+                ], xs=4, md=2, className="text-center mb-1"),
+                dbc.Col([
+                    html.Div("Grid Cost", className="text-muted small"),
+                    html.Span("--", id="detail-total-cost", className="fw-bold text-danger"),
+                ], xs=4, md=2, className="text-center mb-1"),
+                dbc.Col([
+                    html.Div("Saved", className="text-muted small"),
+                    html.Span("--", id="detail-total-saved", className="fw-bold text-success"),
+                ], xs=4, md=2, className="text-center mb-1"),
+            ], className="mb-2 g-1"),
+            html.Div(id="daily-detail-table", style={"overflowX": "auto"}),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
+def _analytics_page() -> html.Div:
+    return html.Div([
+        html.H5([
+            html.I(className="fas fa-chart-area me-2"),
+            "Analytics",
+        ], className="mb-2"),
+
+        _weather_forecast_card(),
+        _hourly_pattern_card(),
+        _daily_detail_table_card(),
+        _daily_comparison_card(),
+        _weekly_summary_card(),
+        _monthly_summary_card(),
+
+        # Refresh interval for analytics
+        dcc.Interval(id="interval-analytics", interval=60_000, n_intervals=0),
     ])
 
 
@@ -771,3 +1078,7 @@ def get_operations_page() -> html.Div:
 
 def get_admin_page() -> html.Div:
     return _admin_page()
+
+
+def get_analytics_page() -> html.Div:
+    return _analytics_page()

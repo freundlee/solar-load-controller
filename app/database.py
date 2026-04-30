@@ -366,3 +366,206 @@ def get_daily_energy(days: int = 30) -> list[dict]:
             (f"-{days} days",),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_daily_energy_for_date(date_str: str) -> dict | None:
+    """Get daily energy record for a specific date."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM daily_energy WHERE date = ?", (date_str,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+# ---------------------------------------------------------------------------
+# Historical analytics
+# ---------------------------------------------------------------------------
+
+
+def get_hourly_avg_load(hour: int, days_back: int = 7) -> float | None:
+    """Get average load setting for a given hour based on recent history."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT AVG(new_load_w) as avg_load
+               FROM load_changes
+               WHERE timestamp >= datetime('now', ?)
+               AND CAST(strftime('%H', timestamp) AS INTEGER) = ?""",
+            (f"-{days_back} days", hour),
+        ).fetchone()
+        if row and row["avg_load"] is not None:
+            return float(row["avg_load"])
+        return None
+
+
+def get_hourly_stats(days_back: int = 7) -> list[dict]:
+    """Get per-hour average meter readings and load for recent days."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT
+                 CAST(strftime('%H', timestamp) AS INTEGER) as hour,
+                 AVG(power_w) as avg_power_w,
+                 MIN(power_w) as min_power_w,
+                 MAX(power_w) as max_power_w,
+                 COUNT(*) as sample_count
+               FROM meter_readings
+               WHERE timestamp >= datetime('now', ?)
+               GROUP BY hour
+               ORDER BY hour""",
+            (f"-{days_back} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_meter_stats_for_period(start_date: str, end_date: str) -> dict | None:
+    """Get aggregated meter stats for a date range."""
+    with get_db() as conn:
+        row = conn.execute(
+            """SELECT
+                 COUNT(*) as readings_count,
+                 AVG(power_w) as avg_power_w,
+                 MIN(power_w) as min_power_w,
+                 MAX(power_w) as max_power_w,
+                 SUM(CASE WHEN power_w > 0 THEN power_w ELSE 0 END) as total_import_sum,
+                 SUM(CASE WHEN power_w < 0 THEN ABS(power_w) ELSE 0 END) as total_export_sum
+               FROM meter_readings
+               WHERE timestamp >= ? AND timestamp < ?""",
+            (start_date, end_date),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_daily_comparison(days: int = 30) -> list[dict]:
+    """Get daily energy data for comparison charts."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT
+                 date,
+                 solar_production_wh,
+                 battery_charge_wh,
+                 battery_discharge_wh,
+                 grid_import_wh,
+                 grid_export_wh,
+                 home_consumption_wh,
+                 cost_saved_eur,
+                 avg_load_w,
+                 load_changes_count
+               FROM daily_energy
+               WHERE date >= date('now', ?)
+               ORDER BY date ASC""",
+            (f"-{days} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_weekly_summary(weeks: int = 12) -> list[dict]:
+    """Get weekly aggregated energy data."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT
+                 strftime('%Y-W%W', date) as week,
+                 SUM(solar_production_wh) as solar_wh,
+                 SUM(battery_charge_wh) as charge_wh,
+                 SUM(battery_discharge_wh) as discharge_wh,
+                 SUM(grid_import_wh) as import_wh,
+                 SUM(grid_export_wh) as export_wh,
+                 SUM(home_consumption_wh) as consumption_wh,
+                 SUM(cost_saved_eur) as cost_saved,
+                 AVG(avg_load_w) as avg_load,
+                 SUM(load_changes_count) as total_changes,
+                 COUNT(*) as days_count
+               FROM daily_energy
+               WHERE date >= date('now', ?)
+               GROUP BY week
+               ORDER BY week ASC""",
+            (f"-{weeks * 7} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_monthly_summary(months: int = 12) -> list[dict]:
+    """Get monthly aggregated energy data."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT
+                 strftime('%Y-%m', date) as month,
+                 SUM(solar_production_wh) as solar_wh,
+                 SUM(battery_charge_wh) as charge_wh,
+                 SUM(battery_discharge_wh) as discharge_wh,
+                 SUM(grid_import_wh) as import_wh,
+                 SUM(grid_export_wh) as export_wh,
+                 SUM(home_consumption_wh) as consumption_wh,
+                 SUM(cost_saved_eur) as cost_saved,
+                 AVG(avg_load_w) as avg_load,
+                 SUM(load_changes_count) as total_changes,
+                 COUNT(*) as days_count
+               FROM daily_energy
+               WHERE date >= date('now', ?)
+               GROUP BY month
+               ORDER BY month ASC""",
+            (f"-{months} months",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def backfill_daily_energy_from_readings() -> int:
+    """Compute grid import/export Wh from meter_readings for dates with missing data.
+
+    Uses trapezoidal integration of consecutive power readings.
+    Only backfills dates before today that have 0 for both import and export.
+    Returns the number of dates updated.
+    """
+    with get_db() as conn:
+        # Compute import/export per day using trapezoidal integration
+        rows = conn.execute("""
+            WITH readings_with_delta AS (
+                SELECT
+                    date(timestamp) as d,
+                    (power_w + LAG(power_w) OVER (PARTITION BY date(timestamp) ORDER BY timestamp)) / 2.0 as avg_power,
+                    (julianday(timestamp) - julianday(LAG(timestamp) OVER (PARTITION BY date(timestamp) ORDER BY timestamp))) * 86400.0 as dt_seconds
+                FROM meter_readings
+            )
+            SELECT d,
+                COALESCE(SUM(CASE WHEN avg_power > 0 AND dt_seconds > 0 AND dt_seconds < 1800
+                    THEN avg_power * dt_seconds / 3600.0 ELSE 0 END), 0) as import_wh,
+                COALESCE(SUM(CASE WHEN avg_power < 0 AND dt_seconds > 0 AND dt_seconds < 1800
+                    THEN ABS(avg_power) * dt_seconds / 3600.0 ELSE 0 END), 0) as export_wh
+            FROM readings_with_delta
+            WHERE dt_seconds IS NOT NULL AND d < date('now')
+            GROUP BY d
+            ORDER BY d
+        """).fetchall()
+
+        updated = 0
+        for row in rows:
+            date_str = row["d"]
+            import_wh = row["import_wh"]
+            export_wh = row["export_wh"]
+
+            if import_wh <= 0 and export_wh <= 0:
+                continue
+
+            # Only update if current values are 0
+            existing = conn.execute(
+                "SELECT grid_import_wh, grid_export_wh FROM daily_energy WHERE date = ?",
+                (date_str,),
+            ).fetchone()
+
+            if existing is None:
+                # Create a new row with just import/export
+                conn.execute(
+                    """INSERT INTO daily_energy (date, grid_import_wh, grid_export_wh)
+                       VALUES (?, ?, ?)""",
+                    (date_str, import_wh, export_wh),
+                )
+                updated += 1
+            elif existing["grid_import_wh"] == 0 and existing["grid_export_wh"] == 0:
+                conn.execute(
+                    """UPDATE daily_energy
+                       SET grid_import_wh = ?, grid_export_wh = ?, updated_at = datetime('now')
+                       WHERE date = ?""",
+                    (import_wh, export_wh, date_str),
+                )
+                updated += 1
+
+    logger.info("Backfilled import/export for %d dates from meter readings", updated)
+    return updated

@@ -14,14 +14,27 @@ from datetime import datetime, timezone
 import dash
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 from dash import Input, Output, State, callback_context, html, ALL, MATCH, no_update
 
-from app.dashboard.layouts import get_operations_page, get_admin_page
+from app.dashboard.layouts import get_operations_page, get_admin_page, get_analytics_page
+from app.services.strategies import list_strategies
 
 logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000/api"
+
+# Strategy descriptions cache
+_STRATEGY_DESCS: dict[str, str] = {}
+
+
+def _get_strategy_description(name: str) -> str:
+    """Get a strategy's description by name."""
+    if not _STRATEGY_DESCS:
+        for s in list_strategies():
+            _STRATEGY_DESCS[s["name"]] = s["description"]
+    return _STRATEGY_DESCS.get(name, "")
 
 
 def _api_get(path: str) -> dict | list | None:
@@ -63,7 +76,27 @@ _PLOT_LAYOUT = dict(
     legend={"orientation": "h", "y": 1.12, "font": {"size": 10}},
     xaxis={"gridcolor": "rgba(255,255,255,0.05)"},
     yaxis={"gridcolor": "rgba(255,255,255,0.05)"},
+    hovermode="x unified",
+    hoverlabel={"bgcolor": "rgba(30,30,30,0.9)", "font_size": 11},
+    spikedistance=-1,
 )
+
+# Spike crosshair styling — applied via update_xaxes/update_yaxes after layout
+_SPIKE_STYLE = dict(
+    showspikes=True,
+    spikemode="across",
+    spikethickness=0.5,
+    spikecolor="rgba(180,180,180,0.4)",
+    spikedash="dash",
+    spikesnap="cursor",
+)
+
+
+def _apply_crosshair(fig: go.Figure) -> go.Figure:
+    """Apply dashed crosshair spike lines to a figure."""
+    fig.update_xaxes(**_SPIKE_STYLE)
+    fig.update_yaxes(**_SPIKE_STYLE)
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +116,8 @@ def register_callbacks(app: dash.Dash) -> None:
     def route_page(pathname):
         if pathname == "/dashboard/admin":
             return get_admin_page()
+        if pathname == "/dashboard/analytics":
+            return get_analytics_page()
         return get_operations_page()
 
     # -------------------------------------------------------------------
@@ -120,6 +155,15 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("strategy-baseline", "children"),
             Output("strategy-last-action", "children"),
             Output("strategy-current-spike", "children"),
+            # Strategy explanation
+            Output("strategy-description", "children"),
+            Output("strategy-decision-notes", "children"),
+            # Energy tracking
+            Output("energy-import-today", "children"),
+            Output("energy-export-today", "children"),
+            Output("energy-consumption-today", "children"),
+            # Strategy selector sync
+            Output("strategy-selector", "value"),
             # Daily summary
             Output("daily-solar", "children"),
             Output("daily-charge", "children"),
@@ -244,6 +288,15 @@ def register_callbacks(app: dash.Dash) -> None:
             str(strategy.get("baseline_load_w", 0)),
             strategy.get("last_action", "none"),
             plug_text,
+            # Strategy explanation
+            _get_strategy_description(strategy.get("active_strategy", "proportional")),
+            strategy.get("last_decision_notes", "") or "Waiting for data…",
+            # Energy tracking
+            f"{strategy.get('energy', {}).get('grid_import_kwh', 0):.3f}",
+            f"{strategy.get('energy', {}).get('grid_export_kwh', 0):.3f}",
+            f"{strategy.get('energy', {}).get('home_consumption_kwh', 0):.3f}",
+            # Strategy selector
+            strategy.get("active_strategy", "proportional"),
             # Daily
             f"{anker.get('today_solar_kwh', 0):.2f}",
             f"{anker.get('today_charge_kwh', 0):.2f}",
@@ -381,54 +434,59 @@ def register_callbacks(app: dash.Dash) -> None:
                 line={"color": "#17a2b8", "width": 2},
                 fill="tozeroy",
                 fillcolor="rgba(23,162,184,0.15)",
+                hovertemplate="%{x|%H:%M:%S}<br>Grid: %{y:.0f}W<extra></extra>",
             ))
 
         fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-        fig.update_layout(**_PLOT_LAYOUT, height=200, yaxis_title="W")
+        fig.update_layout(**_PLOT_LAYOUT, height=220, yaxis_title="W", uirevision="live")
+        _apply_crosshair(fig)
         return fig
 
     # -------------------------------------------------------------------
-    # 6. History chart (range-selectable — from DB)
+    # 6b. Load ↔ Grid Balance chart
     # -------------------------------------------------------------------
 
     @app.callback(
-        Output("history-range-store", "data"),
-        [Input("history-range-6h", "n_clicks"),
-         Input("history-range-24h", "n_clicks"),
-         Input("history-range-3d", "n_clicks"),
-         Input("history-range-7d", "n_clicks")],
+        Output("balance-range-store", "data"),
+        [Input("balance-range-6h", "n_clicks"),
+         Input("balance-range-24h", "n_clicks"),
+         Input("balance-range-3d", "n_clicks"),
+         Input("balance-range-7d", "n_clicks")],
         prevent_initial_call=True,
     )
-    def set_history_range(n6, n24, n3d, n7d):
+    def set_balance_range(n6, n24, n3d, n7d):
         ctx = callback_context
         if not ctx.triggered:
             return no_update
         btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
         ranges = {
-            "history-range-6h": 21600,
-            "history-range-24h": 86400,
-            "history-range-3d": 259200,
-            "history-range-7d": 604800,
+            "balance-range-6h": 21600,
+            "balance-range-24h": 86400,
+            "balance-range-3d": 259200,
+            "balance-range-7d": 604800,
         }
         return ranges.get(btn_id, 86400)
 
     @app.callback(
-        [Output("history-range-6h", "outline"),
-         Output("history-range-24h", "outline"),
-         Output("history-range-3d", "outline"),
-         Output("history-range-7d", "outline")],
-        Input("history-range-store", "data"),
+        [Output("balance-range-6h", "outline"),
+         Output("balance-range-24h", "outline"),
+         Output("balance-range-3d", "outline"),
+         Output("balance-range-7d", "outline")],
+        Input("balance-range-store", "data"),
     )
-    def update_history_btn_style(seconds):
+    def update_balance_btn_style(seconds):
         active = {21600: 0, 86400: 1, 259200: 2, 604800: 3}.get(seconds, 1)
         return [i != active for i in range(4)]
 
     @app.callback(
-        Output("history-chart", "figure"),
+        [Output("balance-chart", "figure"),
+         Output("balance-self-pct", "children"),
+         Output("balance-import-dur", "children"),
+         Output("balance-export-dur", "children")],
         [Input("interval-medium", "n_intervals"),
-         Input("history-range-store", "data")],
+         Input("balance-range-store", "data")],
     )
-    def update_history_chart(_n, seconds):
+    def update_balance_chart(_n, seconds):
         seconds = seconds or 86400
         hours = seconds // 3600
         load_data = _api_get(f"/load-history?hours={hours}") or []
@@ -436,95 +494,212 @@ def register_callbacks(app: dash.Dash) -> None:
 
         fig = go.Figure()
 
-        if meter_data:
-            meter_data_sorted = sorted(meter_data, key=lambda x: x.get("timestamp", ""))
-            fig.add_trace(go.Scatter(
-                x=[r["timestamp"] for r in meter_data_sorted],
-                y=[r["power_w"] for r in meter_data_sorted],
-                name="Grid (W)",
-                line={"color": "#17a2b8", "width": 1},
-                fill="tozeroy",
-                fillcolor="rgba(23,162,184,0.1)",
-            ))
+        if not meter_data:
+            fig.update_layout(**_PLOT_LAYOUT, height=300, uirevision="balance")
+            _apply_crosshair(fig)
+            return fig, "--", "--", "--"
 
-        if load_data:
-            load_data_sorted = sorted(load_data, key=lambda x: x.get("timestamp", ""))
-            fig.add_trace(go.Scatter(
-                x=[r["timestamp"] for r in load_data_sorted],
-                y=[r["new_load_w"] for r in load_data_sorted],
-                name="Load (W)",
-                line={"color": "#ffc107", "width": 2},
-                mode="lines+markers",
-                marker={"size": 3},
-            ))
+        meter_sorted = sorted(meter_data, key=lambda x: x.get("timestamp", ""))
+        load_sorted = sorted(load_data, key=lambda x: x.get("timestamp", ""))
 
-        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.2)")
-        fig.update_layout(**_PLOT_LAYOUT, height=250, yaxis_title="W")
-        return fig
+        m_ts = [r["timestamp"] for r in meter_sorted]
+        m_pw = [r["power_w"] for r in meter_sorted]
+
+        # Build a step-interpolated load series aligned to meter timestamps
+        # Load changes are sparse events; between them the load is constant
+        load_at_meter = []
+        li = 0
+        current_load = 0
+        for ts in m_ts:
+            while li < len(load_sorted) and load_sorted[li]["timestamp"] <= ts:
+                current_load = load_sorted[li].get("new_load_w", 0)
+                li += 1
+            load_at_meter.append(current_load)
+
+        # --- Traces ---
+
+        # 1. Grid meter line (the actual reading)
+        fig.add_trace(go.Scatter(
+            x=m_ts, y=m_pw,
+            name="Grid (W)",
+            line={"color": "#17a2b8", "width": 1.5},
+            hovertemplate="%{x|%m-%d %H:%M}<br>Grid: %{y:.0f}W<extra></extra>",
+        ))
+
+        # 2. Load setting as step line
+        fig.add_trace(go.Scatter(
+            x=m_ts, y=load_at_meter,
+            name="Load (W)",
+            line={"color": "#ffc107", "width": 2, "shape": "hv"},
+            hovertemplate="%{x|%m-%d %H:%M}<br>Load: %{y}W<extra></extra>",
+        ))
+
+        # 3. Colored fill: green when grid <= 0 (self-sufficient/exporting),
+        #    red when grid > 0 (importing)
+        import_y = []
+        export_y = []
+        for pw in m_pw:
+            if pw > 0:
+                import_y.append(pw)
+                export_y.append(0)
+            else:
+                import_y.append(0)
+                export_y.append(pw)
+
+        fig.add_trace(go.Scatter(
+            x=m_ts, y=import_y,
+            fill="tozeroy",
+            fillcolor="rgba(220,53,69,0.25)",
+            line={"width": 0},
+            name="Importing",
+            showlegend=True,
+            hoverinfo="skip",
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=m_ts, y=export_y,
+            fill="tozeroy",
+            fillcolor="rgba(40,167,69,0.25)",
+            line={"width": 0},
+            name="Exporting",
+            showlegend=True,
+            hoverinfo="skip",
+        ))
+
+        # Zero line
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(255,255,255,0.4)",
+                      line_width=1.5)
+
+        fig.update_layout(**_PLOT_LAYOUT, height=300, yaxis_title="W",
+                          uirevision="balance")
+
+        # --- Compute summary stats ---
+        total_points = len(m_pw)
+        import_points = sum(1 for pw in m_pw if pw > 10)    # >10W = importing
+        export_points = sum(1 for pw in m_pw if pw < -10)   # <-10W = exporting
+        self_sufficient = total_points - import_points  # grid ≤ 10W
+
+        pct = f"{self_sufficient / total_points * 100:.0f}%" if total_points > 0 else "--"
+
+        # Estimate durations from reading intervals
+        if total_points >= 2:
+            try:
+                from datetime import datetime as _dt
+                first = _dt.fromisoformat(m_ts[0].replace("Z", "+00:00"))
+                last = _dt.fromisoformat(m_ts[-1].replace("Z", "+00:00"))
+                span_s = (last - first).total_seconds()
+                avg_interval = span_s / (total_points - 1) if total_points > 1 else 0
+            except Exception:
+                avg_interval = seconds / total_points
+
+            import_s = import_points * avg_interval
+            export_s = export_points * avg_interval
+
+            def _fmt_dur(secs):
+                if secs < 60:
+                    return f"{secs:.0f}s"
+                if secs < 3600:
+                    return f"{secs / 60:.0f}m"
+                h = int(secs // 3600)
+                m = int((secs % 3600) // 60)
+                return f"{h}h{m:02d}m"
+
+            import_dur = _fmt_dur(import_s)
+            export_dur = _fmt_dur(export_s)
+        else:
+            import_dur = "--"
+            export_dur = "--"
+
+        _apply_crosshair(fig)
+        return fig, pct, import_dur, export_dur
 
     # -------------------------------------------------------------------
-    # 7. Daily energy bar chart (slow refresh)
+    # 7. Daily energy flow chart (slow refresh)
     # -------------------------------------------------------------------
 
     @app.callback(
-        Output("daily-energy-chart", "figure"),
+        [Output("daily-energy-chart", "figure"),
+         Output("daily-energy-selfuse", "children"),
+         Output("daily-energy-ss-pct", "children"),
+         Output("daily-energy-import", "children"),
+         Output("daily-energy-export", "children")],
         Input("interval-slow", "n_intervals"),
     )
     def update_daily_energy_chart(_n):
         data = _api_get("/daily-energy?days=30") or []
 
         fig = go.Figure()
+        if not data:
+            fig.update_layout(**_PLOT_LAYOUT, height=280, uirevision="daily-energy")
+            _apply_crosshair(fig)
+            return fig, "--", "--", "--", "--"
 
-        if data:
-            # Sort by date ascending
-            data_sorted = sorted(data, key=lambda x: x.get("date", ""))
-            dates = [d["date"] for d in data_sorted]
+        data_sorted = sorted(data, key=lambda x: x.get("date", ""))
+        dates = [d["date"] for d in data_sorted]
 
-            # Solar production
-            fig.add_trace(go.Bar(
-                x=dates,
-                y=[d.get("solar_production_wh", 0) / 1000 for d in data_sorted],
-                name="Solar (kWh)",
-                marker_color="#ffc107",
-                opacity=0.8,
-            ))
+        solar = [d.get("solar_production_wh", 0) / 1000 for d in data_sorted]
+        home = [d.get("home_consumption_wh", 0) / 1000 for d in data_sorted]
+        imp = [d.get("grid_import_wh", 0) / 1000 for d in data_sorted]
+        exp = [d.get("grid_export_wh", 0) / 1000 for d in data_sorted]
+        selfuse = [max(s - e, 0) for s, e in zip(solar, exp)]
+        ss_pct = [min(su / h * 100, 100) if h > 0 else 0
+                  for su, h in zip(selfuse, home)]
 
-            # Home consumption
-            fig.add_trace(go.Bar(
-                x=dates,
-                y=[d.get("home_consumption_wh", 0) / 1000 for d in data_sorted],
-                name="Home (kWh)",
-                marker_color="#17a2b8",
-                opacity=0.8,
-            ))
+        # --- Diverging stacked bars ---
+        # Upward: Self-use (green) + Export (teal)
+        fig.add_trace(go.Bar(
+            x=dates, y=selfuse, name="Self-use",
+            marker_color="rgba(40,167,69,0.85)",
+            hovertemplate="%{x}<br>Self-use: %{y:.2f} kWh<extra></extra>",
+        ))
+        fig.add_trace(go.Bar(
+            x=dates, y=exp, name="Export",
+            marker_color="rgba(23,162,184,0.75)",
+            hovertemplate="%{x}<br>Export: %{y:.2f} kWh<extra></extra>",
+        ))
+        # Downward: Import (red, negative)
+        fig.add_trace(go.Bar(
+            x=dates, y=[-v for v in imp], name="Import",
+            marker_color="rgba(220,53,69,0.80)",
+            hovertemplate="%{x}<br>Import: %{customdata:.2f} kWh<extra></extra>",
+            customdata=imp,
+        ))
+        # Self-sufficiency % line on secondary axis
+        fig.add_trace(go.Scatter(
+            x=dates, y=ss_pct, name="SS%",
+            yaxis="y2", mode="lines+markers",
+            line={"color": "#ffc107", "width": 2, "dash": "dot"},
+            marker={"size": 4, "symbol": "diamond"},
+            hovertemplate="%{x}<br>Self-sufficiency: %{y:.0f}%<extra></extra>",
+        ))
 
-            # Grid export (Einspeisung)
-            fig.add_trace(go.Bar(
-                x=dates,
-                y=[d.get("grid_export_wh", 0) / 1000 for d in data_sorted],
-                name="Export (kWh)",
-                marker_color="#28a745",
-                opacity=0.8,
-            ))
-
-            # Grid import
-            fig.add_trace(go.Bar(
-                x=dates,
-                y=[d.get("grid_import_wh", 0) / 1000 for d in data_sorted],
-                name="Import (kWh)",
-                marker_color="#dc3545",
-                opacity=0.8,
-            ))
-
+        fig.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_width=1)
         fig.update_layout(
-            **_PLOT_LAYOUT,
-            height=280,
-            yaxis_title="kWh",
-            barmode="group",
+            **_PLOT_LAYOUT, height=280,
+            yaxis_title="kWh", barmode="relative",
             bargap=0.15,
-            bargroupgap=0.05,
+            yaxis2={"overlaying": "y", "side": "right", "title": "%",
+                     "showgrid": False, "range": [0, 110],
+                     "tickfont": {"color": "#ffc107", "size": 10},
+                     "titlefont": {"color": "#ffc107"}},
+            uirevision="daily-energy",
         )
-        return fig
+        fig.update_layout(legend={"orientation": "h", "y": 1.12, "x": 0.5,
+                                  "xanchor": "center", "font": {"size": 10}})
+        _apply_crosshair(fig)
+
+        # KPI badges
+        t_selfuse = sum(selfuse)
+        t_home = sum(home)
+        avg_ss = t_selfuse / t_home * 100 if t_home > 0 else 0
+        t_imp = sum(imp)
+        t_exp = sum(exp)
+
+        return (fig,
+                f"{t_selfuse:.1f} kWh",
+                f"{avg_ss:.0f}%",
+                f"{t_imp:.1f} kWh",
+                f"{t_exp:.1f} kWh")
 
     # -------------------------------------------------------------------
     # 7b. Smart Plugs collapse toggle
@@ -634,109 +809,7 @@ def register_callbacks(app: dash.Dash) -> None:
         return dbc.Alert(f"Failed to save {key}", color="danger", duration=3000)
 
     # -------------------------------------------------------------------
-    # 11. Appliance profiles table
-    # -------------------------------------------------------------------
-
-    @app.callback(
-        Output("profiles-table", "children"),
-        Input("interval-slow", "n_intervals"),
-        Input("btn-add-profile", "n_clicks"),
-    )
-    def render_profiles_table(_n, _add_clicks):
-        profiles = _api_get("/profiles") or []
-
-        if not profiles:
-            return html.P("No profiles.", className="text-muted small")
-
-        header = html.Thead(html.Tr([
-            html.Th("Name"),
-            html.Th("Range"),
-            html.Th("Action"),
-            html.Th(""),
-        ]))
-
-        rows = []
-        for p in profiles:
-            rows.append(html.Tr([
-                html.Td(p["name"], className="small"),
-                html.Td(f"{p['power_min_w']:.0f}–{p['power_max_w']:.0f}W", className="small"),
-                html.Td(
-                    dbc.Badge(p["action"],
-                              color={"ignore": "secondary", "observe": "info",
-                                     "adjust": "warning"}.get(p["action"], "light")),
-                ),
-                html.Td(
-                    dbc.Button(
-                        html.I(className="fas fa-trash"),
-                        id={"type": "delete-profile-btn", "index": p["id"]},
-                        color="outline-danger",
-                        size="sm",
-                    ),
-                ),
-            ]))
-
-        return dbc.Table([header, html.Tbody(rows)],
-                         bordered=True, dark=True, hover=True, size="sm",
-                         responsive=True)
-
-    # -------------------------------------------------------------------
-    # 12. Add profile
-    # -------------------------------------------------------------------
-
-    @app.callback(
-        Output("profile-status-msg", "children"),
-        Input("btn-add-profile", "n_clicks"),
-        [
-            State("profile-name", "value"),
-            State("profile-min-w", "value"),
-            State("profile-max-w", "value"),
-            State("profile-typ-dur", "value"),
-            State("profile-action", "value"),
-        ],
-        prevent_initial_call=True,
-    )
-    def add_profile(_clicks, name, min_w, max_w, typ_dur, action):
-        if not name or min_w is None or max_w is None:
-            return dbc.Alert("Fill Name, Min W, Max W", color="warning", duration=3000)
-
-        result = _api_post("/profiles", {
-            "name": name,
-            "power_min_w": float(min_w),
-            "power_max_w": float(max_w),
-            "typical_duration_s": int(typ_dur) if typ_dur else None,
-            "max_duration_s": int(typ_dur * 2) if typ_dur else None,
-            "action": action or "observe",
-        })
-        if result and result.get("success"):
-            return dbc.Alert(f"'{name}' added", color="success", duration=3000)
-        return dbc.Alert("Failed", color="danger", duration=3000)
-
-    # -------------------------------------------------------------------
-    # 13. Delete profile
-    # -------------------------------------------------------------------
-
-    @app.callback(
-        Output("profile-status-msg", "children", allow_duplicate=True),
-        Input({"type": "delete-profile-btn", "index": ALL}, "n_clicks"),
-        prevent_initial_call=True,
-    )
-    def delete_profile(n_clicks_list):
-        ctx = callback_context
-        if not ctx.triggered or not any(n_clicks_list):
-            return no_update
-
-        import json as _json
-        triggered = ctx.triggered[0]
-        btn_id = _json.loads(triggered["prop_id"].rsplit(".", 1)[0])
-        profile_id = btn_id["index"]
-
-        result = _api_delete(f"/profiles/{profile_id}")
-        if result and result.get("success"):
-            return dbc.Alert("Deleted", color="info", duration=3000)
-        return dbc.Alert("Failed", color="danger", duration=3000)
-
-    # -------------------------------------------------------------------
-    # 14. Recent load changes table (admin page)
+    # 11. Recent load changes table (admin page)
     # -------------------------------------------------------------------
 
     @app.callback(
@@ -950,3 +1023,710 @@ def register_callbacks(app: dash.Dash) -> None:
                 )
 
         return html.Div(sections)
+
+    # ===================================================================
+    # STRATEGY CHANGE callback
+    # ===================================================================
+
+    @app.callback(
+        Output("strategy-change-status", "children"),
+        Input("strategy-selector", "value"),
+        prevent_initial_call=True,
+    )
+    def change_strategy(strategy_name):
+        if not strategy_name:
+            return no_update
+        # Check if already the active strategy
+        current = _api_get("/strategies")
+        if current and current.get("active") == strategy_name:
+            return ""
+        result = _api_post("/strategies", {"strategy": strategy_name})
+        if result and result.get("success"):
+            return html.Span(f"→ {strategy_name}", className="text-success small")
+        return html.Span("failed", className="text-danger small")
+
+    # ===================================================================
+    # ANALYTICS PAGE callbacks
+    # ===================================================================
+
+    # -------------------------------------------------------------------
+    # A1. Hourly pattern chart
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("hourly-pattern-chart", "figure"),
+        Input("interval-analytics", "n_intervals"),
+    )
+    def update_hourly_pattern(_n):
+        data = _api_get("/analytics/hourly?days=7") or []
+        fig = go.Figure()
+
+        if data:
+            hours = [d.get("hour", 0) for d in data]
+            avg_power = [d.get("avg_power_w", 0) for d in data]
+            min_power = [d.get("min_power_w", 0) for d in data]
+            max_power = [d.get("max_power_w", 0) for d in data]
+
+            # Range band (min-max)
+            fig.add_trace(go.Scatter(
+                x=hours + hours[::-1],
+                y=max_power + min_power[::-1],
+                fill="toself",
+                fillcolor="rgba(23,162,184,0.1)",
+                line={"color": "rgba(0,0,0,0)"},
+                name="Range",
+                showlegend=False,
+            ))
+            # Average line
+            fig.add_trace(go.Scatter(
+                x=hours, y=avg_power,
+                name="Avg Grid (W)",
+                line={"color": "#17a2b8", "width": 2},
+                mode="lines+markers",
+                marker={"size": 4},
+                hovertemplate="Hour %{x}:00<br>Avg: %{y:.0f}W<extra></extra>",
+            ))
+
+        fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+        fig.update_layout(**_PLOT_LAYOUT, height=250,
+                          xaxis_title="Hour of Day", yaxis_title="W",
+                          uirevision="hourly")
+        _apply_crosshair(fig)
+        return fig
+
+    # -------------------------------------------------------------------
+    # A1b. Daily detail statistics table
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("detail-range-store", "data"),
+        [Input("detail-range-7d", "n_clicks"),
+         Input("detail-range-14d", "n_clicks"),
+         Input("detail-range-30d", "n_clicks"),
+         Input("detail-range-90d", "n_clicks")],
+        prevent_initial_call=True,
+    )
+    def set_detail_range(n7, n14, n30, n90):
+        ctx = callback_context
+        if not ctx.triggered:
+            return no_update
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        ranges = {
+            "detail-range-7d": 7,
+            "detail-range-14d": 14,
+            "detail-range-30d": 30,
+            "detail-range-90d": 90,
+        }
+        return ranges.get(btn_id, 30)
+
+    @app.callback(
+        [Output("detail-range-7d", "outline"),
+         Output("detail-range-14d", "outline"),
+         Output("detail-range-30d", "outline"),
+         Output("detail-range-90d", "outline")],
+        Input("detail-range-store", "data"),
+    )
+    def update_detail_btn_style(days):
+        active = {7: 0, 14: 1, 30: 2, 90: 3}.get(days, 2)
+        return [i != active for i in range(4)]
+
+    @app.callback(
+        [Output("daily-detail-table", "children"),
+         Output("detail-total-solar", "children"),
+         Output("detail-total-selfuse", "children"),
+         Output("detail-total-import", "children"),
+         Output("detail-total-export", "children"),
+         Output("detail-total-cost", "children"),
+         Output("detail-total-saved", "children")],
+        [Input("interval-analytics", "n_intervals"),
+         Input("detail-range-store", "data")],
+    )
+    def update_daily_detail_table(_n, days):
+        days = days or 30
+        data = _api_get(f"/analytics/daily?days={days}") or []
+        config = _api_get("/config") or {}
+
+        price_kwh = float(config.get("electricity_price_eur_kwh", 0.28))
+        feed_in = float(config.get("feed_in_tariff_eur_kwh", 0.082))
+
+        if not data:
+            empty = html.P("No data available.", className="text-muted small")
+            return empty, "--", "--", "--", "--", "--", "--"
+
+        # --- Build table ---
+        header = html.Thead(html.Tr([
+            html.Th("Date", className="small"),
+            html.Th("Solar", className="small text-end"),
+            html.Th("Home", className="small text-end"),
+            html.Th("Self-use", className="small text-end"),
+            html.Th("Import", className="small text-end"),
+            html.Th("Export", className="small text-end"),
+            html.Th("Cost", className="small text-end"),
+            html.Th("Saved", className="small text-end"),
+            html.Th("Feed-in", className="small text-end"),
+            html.Th("Load Adj.", className="small text-end"),
+        ]), className="table-dark")
+
+        rows = []
+        t_solar = t_home = t_import = t_export = t_selfuse = 0.0
+        t_cost = t_saved = t_feedin = 0.0
+
+        for d in reversed(data):  # newest first
+            solar_kwh = d.get("solar_production_wh", 0) / 1000
+            home_kwh = d.get("home_consumption_wh", 0) / 1000
+            import_kwh = d.get("grid_import_wh", 0) / 1000
+            export_kwh = d.get("grid_export_wh", 0) / 1000
+            changes = d.get("load_changes_count", 0)
+
+            # Self-use = solar produced - exported (what we actually used from solar)
+            selfuse_kwh = max(solar_kwh - export_kwh, 0)
+            # Grid cost = import * price
+            grid_cost = import_kwh * price_kwh
+            # Saved = self-use * grid price (avoided import)
+            saved = selfuse_kwh * price_kwh
+            # Feed-in revenue = export * feed-in tariff
+            feedin_rev = export_kwh * feed_in
+
+            t_solar += solar_kwh
+            t_home += home_kwh
+            t_import += import_kwh
+            t_export += export_kwh
+            t_selfuse += selfuse_kwh
+            t_cost += grid_cost
+            t_saved += saved
+            t_feedin += feedin_rev
+
+            date_str = d.get("date", "")
+            # Short date: MM-DD
+            short_date = date_str[5:] if len(date_str) >= 10 else date_str
+
+            rows.append(html.Tr([
+                html.Td(short_date, className="small"),
+                html.Td(f"{solar_kwh:.2f}", className="small text-end text-warning"),
+                html.Td(f"{home_kwh:.2f}", className="small text-end"),
+                html.Td(f"{selfuse_kwh:.2f}", className="small text-end text-success"),
+                html.Td(f"{import_kwh:.2f}", className="small text-end text-danger"),
+                html.Td(f"{export_kwh:.2f}", className="small text-end text-info"),
+                html.Td(f"€{grid_cost:.2f}", className="small text-end text-danger"),
+                html.Td(f"€{saved:.2f}", className="small text-end text-success"),
+                html.Td(f"€{feedin_rev:.3f}", className="small text-end text-info"),
+                html.Td(str(changes), className="small text-end text-muted"),
+            ]))
+
+        # Totals / averages footer
+        n_days = len(data)
+        footer = html.Tfoot(html.Tr([
+            html.Td(f"Σ {n_days}d", className="small fw-bold"),
+            html.Td(f"{t_solar:.1f}", className="small text-end fw-bold text-warning"),
+            html.Td(f"{t_home:.1f}", className="small text-end fw-bold"),
+            html.Td(f"{t_selfuse:.1f}", className="small text-end fw-bold text-success"),
+            html.Td(f"{t_import:.1f}", className="small text-end fw-bold text-danger"),
+            html.Td(f"{t_export:.1f}", className="small text-end fw-bold text-info"),
+            html.Td(f"€{t_cost:.2f}", className="small text-end fw-bold text-danger"),
+            html.Td(f"€{t_saved:.2f}", className="small text-end fw-bold text-success"),
+            html.Td(f"€{t_feedin:.2f}", className="small text-end fw-bold text-info"),
+            html.Td("", className="small"),
+        ], className="table-secondary"))
+
+        table = dbc.Table(
+            [header, html.Tbody(rows), footer],
+            bordered=True, dark=True, hover=True, size="sm",
+            responsive=True, striped=True,
+        )
+
+        # Summary badges
+        solar_s = f"{t_solar:.1f} kWh"
+        selfuse_s = f"{t_selfuse:.1f} kWh"
+        import_s = f"{t_import:.1f} kWh"
+        export_s = f"{t_export:.1f} kWh"
+        cost_s = f"€{t_cost:.2f}"
+        saved_s = f"€{t_saved + t_feedin:.2f}"
+
+        return table, solar_s, selfuse_s, import_s, export_s, cost_s, saved_s
+
+    # -------------------------------------------------------------------
+    # A2. Daily comparison chart
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("daily-comp-range-store", "data"),
+        [Input("daily-comp-7d", "n_clicks"),
+         Input("daily-comp-14d", "n_clicks"),
+         Input("daily-comp-30d", "n_clicks"),
+         Input("daily-comp-90d", "n_clicks")],
+        prevent_initial_call=True,
+    )
+    def set_daily_comp_range(n7, n14, n30, n90):
+        ctx = callback_context
+        if not ctx.triggered:
+            return no_update
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        ranges = {
+            "daily-comp-7d": 7,
+            "daily-comp-14d": 14,
+            "daily-comp-30d": 30,
+            "daily-comp-90d": 90,
+        }
+        return ranges.get(btn_id, 30)
+
+    @app.callback(
+        [Output("daily-comp-7d", "outline"),
+         Output("daily-comp-14d", "outline"),
+         Output("daily-comp-30d", "outline"),
+         Output("daily-comp-90d", "outline")],
+        Input("daily-comp-range-store", "data"),
+    )
+    def update_daily_comp_btn_style(days):
+        active = {7: 0, 14: 1, 30: 2, 90: 3}.get(days, 2)
+        return [i != active for i in range(4)]
+
+    @app.callback(
+        [Output("daily-comparison-chart", "figure"),
+         Output("daily-comp-avg-solar", "children"),
+         Output("daily-comp-avg-ss", "children"),
+         Output("daily-comp-import", "children"),
+         Output("daily-comp-net-cost", "children")],
+        [Input("interval-analytics", "n_intervals"),
+         Input("daily-comp-range-store", "data")],
+    )
+    def update_daily_comparison(_n, days):
+        days = days or 30
+        data = _api_get(f"/analytics/daily?days={days}") or []
+        config = _api_get("/config") or {}
+        price_kwh = float(config.get("electricity_price_eur_kwh", 0.28))
+        feed_in = float(config.get("feed_in_tariff_eur_kwh", 0.082))
+
+        fig = go.Figure()
+        if not data:
+            fig.update_layout(**_PLOT_LAYOUT, height=340, uirevision="daily-comp")
+            _apply_crosshair(fig)
+            return fig, "--", "--", "--", "--"
+
+        dates = [d.get("date", "") for d in data]
+        solar = [d.get("solar_production_wh", 0) / 1000 for d in data]
+        home = [d.get("home_consumption_wh", 0) / 1000 for d in data]
+        imp = [d.get("grid_import_wh", 0) / 1000 for d in data]
+        exp = [d.get("grid_export_wh", 0) / 1000 for d in data]
+        selfuse = [max(s - e, 0) for s, e in zip(solar, exp)]
+        ss_pct = [min(su / h * 100, 100) if h > 0 else 0
+                  for su, h in zip(selfuse, home)]
+
+        # --- Stacked areas: energy flow ---
+        # Self-use area (green, bottom layer)
+        fig.add_trace(go.Scatter(
+            x=dates, y=selfuse, name="Self-use",
+            fill="tozeroy", fillcolor="rgba(40,167,69,0.35)",
+            line={"color": "#28a745", "width": 1.5},
+            stackgroup="pos",
+            hovertemplate="%{x}<br>Self-use: %{y:.2f} kWh<extra></extra>",
+        ))
+        # Export area (teal, stacked on top of self-use)
+        fig.add_trace(go.Scatter(
+            x=dates, y=exp, name="Export",
+            fill="tonexty", fillcolor="rgba(23,162,184,0.25)",
+            line={"color": "#17a2b8", "width": 1.5},
+            stackgroup="pos",
+            hovertemplate="%{x}<br>Export: %{y:.2f} kWh<extra></extra>",
+        ))
+        # Import area (red, below zero)
+        fig.add_trace(go.Scatter(
+            x=dates, y=[-v for v in imp], name="Import",
+            fill="tozeroy", fillcolor="rgba(220,53,69,0.30)",
+            line={"color": "#dc3545", "width": 1.5},
+            hovertemplate="%{x}<br>Import: %{customdata:.2f} kWh<extra></extra>",
+            customdata=imp,
+        ))
+        # Home consumption as dashed white line
+        fig.add_trace(go.Scatter(
+            x=dates, y=home, name="Home",
+            mode="lines",
+            line={"color": "rgba(255,255,255,0.6)", "width": 1.5, "dash": "dot"},
+            hovertemplate="%{x}<br>Home: %{y:.2f} kWh<extra></extra>",
+        ))
+        # Self-sufficiency % on right axis
+        fig.add_trace(go.Scatter(
+            x=dates, y=ss_pct, name="SS%",
+            yaxis="y2", mode="lines+markers",
+            line={"color": "#ffc107", "width": 2},
+            marker={"size": 3, "symbol": "diamond"},
+            hovertemplate="%{x}<br>SS: %{y:.0f}%<extra></extra>",
+        ))
+
+        fig.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_width=1)
+        fig.update_layout(
+            **_PLOT_LAYOUT, height=340,
+            yaxis_title="kWh",
+            yaxis2={"overlaying": "y", "side": "right", "title": "%",
+                     "showgrid": False, "range": [0, 110],
+                     "tickfont": {"color": "#ffc107", "size": 10},
+                     "titlefont": {"color": "#ffc107"}},
+            uirevision="daily-comp",
+        )
+        fig.update_layout(legend={"orientation": "h", "y": 1.12, "x": 0.5,
+                                  "xanchor": "center", "font": {"size": 10}})
+        _apply_crosshair(fig)
+
+        # KPI
+        n_days = len(data) or 1
+        t_solar = sum(solar)
+        t_selfuse = sum(selfuse)
+        t_home = sum(home)
+        t_imp = sum(imp)
+        t_exp = sum(exp)
+        avg_ss = t_selfuse / t_home * 100 if t_home > 0 else 0
+        net_cost = t_imp * price_kwh - t_exp * feed_in
+
+        return (fig,
+                f"{t_solar / n_days:.1f} kWh",
+                f"{avg_ss:.0f}%",
+                f"{t_imp:.1f} kWh",
+                f"\u20ac{net_cost:.2f}")
+
+    # -------------------------------------------------------------------
+    # A3. Weekly balance – horizontal diverging bars
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("weekly-summary-chart", "figure"),
+        Input("interval-analytics", "n_intervals"),
+    )
+    def update_weekly_summary(_n):
+        data = _api_get("/analytics/weekly?weeks=12") or []
+        fig = go.Figure()
+
+        if data:
+            weeks = [d.get("week", "") for d in data]
+            solar = [d.get("solar_wh", 0) / 1000 for d in data]
+            home = [d.get("consumption_wh", 0) / 1000 for d in data]
+            imp = [d.get("import_wh", 0) / 1000 for d in data]
+            exp = [d.get("export_wh", 0) / 1000 for d in data]
+            selfuse = [max(s - e, 0) for s, e in zip(solar, exp)]
+            ss_pct = [min(su / h * 100, 100) if h > 0 else 0
+                      for su, h in zip(selfuse, home)]
+
+            # Horizontal diverging bars
+            # Right side: Self-use (green) + Export (teal)
+            fig.add_trace(go.Bar(
+                y=weeks, x=selfuse, name="Self-use",
+                orientation="h", marker_color="rgba(40,167,69,0.85)",
+                hovertemplate="%{y}<br>Self-use: %{x:.1f} kWh<extra></extra>",
+            ))
+            fig.add_trace(go.Bar(
+                y=weeks, x=exp, name="Export",
+                orientation="h", marker_color="rgba(23,162,184,0.75)",
+                hovertemplate="%{y}<br>Export: %{x:.1f} kWh<extra></extra>",
+            ))
+            # Left side: Import (red, negative)
+            fig.add_trace(go.Bar(
+                y=weeks, x=[-v for v in imp], name="Import",
+                orientation="h", marker_color="rgba(220,53,69,0.80)",
+                hovertemplate="%{y}<br>Import: %{customdata:.1f} kWh<extra></extra>",
+                customdata=imp,
+            ))
+            # SS% annotations on the right
+            max_solar = max(solar) if solar else 10
+            for i, (w, pct) in enumerate(zip(weeks, ss_pct)):
+                fig.add_annotation(
+                    x=max_solar * 1.05, y=w,
+                    text=f"<b>{pct:.0f}%</b>",
+                    font={"color": "#ffc107", "size": 10},
+                    showarrow=False, xanchor="left",
+                )
+
+        fig.add_vline(x=0, line_color="rgba(255,255,255,0.4)", line_width=1)
+        fig.update_layout(
+            **_PLOT_LAYOUT, height=360,
+            xaxis_title="kWh", barmode="relative",
+            bargap=0.2,
+            uirevision="weekly",
+        )
+        fig.update_layout(legend={"orientation": "h", "y": 1.08, "x": 0.5,
+                                  "xanchor": "center", "font": {"size": 10}})
+        _apply_crosshair(fig)
+        return fig
+
+    # -------------------------------------------------------------------
+    # A4. Monthly overview – indicators + stacked area
+    # -------------------------------------------------------------------
+
+    @app.callback(
+        Output("monthly-summary-chart", "figure"),
+        Input("interval-analytics", "n_intervals"),
+    )
+    def update_monthly_summary(_n):
+        data = _api_get("/analytics/monthly?months=12") or []
+        config = _api_get("/config") or {}
+        price_kwh = float(config.get("electricity_price_eur_kwh", 0.28))
+        feed_in = float(config.get("feed_in_tariff_eur_kwh", 0.082))
+
+        if not data:
+            fig = go.Figure()
+            fig.update_layout(**_PLOT_LAYOUT, height=420, uirevision="monthly")
+            _apply_crosshair(fig)
+            return fig
+
+        months = [d.get("month", "") for d in data]
+        solar = [d.get("solar_wh", 0) / 1000 for d in data]
+        home = [d.get("consumption_wh", 0) / 1000 for d in data]
+        imp = [d.get("import_wh", 0) / 1000 for d in data]
+        exp = [d.get("export_wh", 0) / 1000 for d in data]
+        selfuse = [max(s - e, 0) for s, e in zip(solar, exp)]
+        ss_pct = [min(su / h * 100, 100) if h > 0 else 0
+                  for su, h in zip(selfuse, home)]
+        net_cost = [i * price_kwh - e * feed_in for i, e in zip(imp, exp)]
+
+        # Build subplots: top row = 3 indicators, bottom = area chart
+        fig = make_subplots(
+            rows=2, cols=3,
+            specs=[[{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}],
+                   [{"type": "xy", "colspan": 3}, None, None]],
+            row_heights=[0.22, 0.78],
+            vertical_spacing=0.12,
+        )
+
+        # Latest month values + delta vs previous
+        cur_solar = solar[-1] if solar else 0
+        prev_solar = solar[-2] if len(solar) > 1 else cur_solar
+        cur_ss = ss_pct[-1] if ss_pct else 0
+        prev_ss = ss_pct[-2] if len(ss_pct) > 1 else cur_ss
+        cur_cost = net_cost[-1] if net_cost else 0
+        prev_cost = net_cost[-2] if len(net_cost) > 1 else cur_cost
+
+        fig.add_trace(go.Indicator(
+            mode="number+delta",
+            value=cur_solar,
+            delta={"reference": prev_solar, "relative": True,
+                   "valueformat": ".0%", "increasing": {"color": "#28a745"},
+                   "decreasing": {"color": "#dc3545"}},
+            title={"text": "Solar kWh", "font": {"size": 12, "color": "#aaa"}},
+            number={"font": {"size": 22, "color": "#ffc107"}, "valueformat": ".1f"},
+        ), row=1, col=1)
+
+        fig.add_trace(go.Indicator(
+            mode="number+delta",
+            value=cur_ss,
+            delta={"reference": prev_ss, "valueformat": ".0f",
+                   "suffix": "%",
+                   "increasing": {"color": "#28a745"},
+                   "decreasing": {"color": "#dc3545"}},
+            title={"text": "Self-sufficiency", "font": {"size": 12, "color": "#aaa"}},
+            number={"font": {"size": 22, "color": "#28a745"}, "valueformat": ".0f",
+                    "suffix": "%"},
+        ), row=1, col=2)
+
+        fig.add_trace(go.Indicator(
+            mode="number+delta",
+            value=cur_cost,
+            delta={"reference": prev_cost, "valueformat": ".2f",
+                   "prefix": "\u20ac",
+                   "increasing": {"color": "#dc3545"},
+                   "decreasing": {"color": "#28a745"}},
+            title={"text": "Net Grid Cost", "font": {"size": 12, "color": "#aaa"}},
+            number={"font": {"size": 22, "color": "#dc3545"}, "valueformat": ".2f",
+                    "prefix": "\u20ac"},
+        ), row=1, col=3)
+
+        # Area chart: Self-use + Export stacked, Import negative
+        fig.add_trace(go.Scatter(
+            x=months, y=selfuse, name="Self-use",
+            fill="tozeroy", fillcolor="rgba(40,167,69,0.4)",
+            line={"color": "#28a745", "width": 2},
+            stackgroup="pos",
+            hovertemplate="%{x}<br>Self-use: %{y:.1f} kWh<extra></extra>",
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=months, y=exp, name="Export",
+            fill="tonexty", fillcolor="rgba(23,162,184,0.3)",
+            line={"color": "#17a2b8", "width": 2},
+            stackgroup="pos",
+            hovertemplate="%{x}<br>Export: %{y:.1f} kWh<extra></extra>",
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=months, y=[-v for v in imp], name="Import",
+            fill="tozeroy", fillcolor="rgba(220,53,69,0.3)",
+            line={"color": "#dc3545", "width": 2},
+            hovertemplate="%{x}<br>Import: %{customdata:.1f} kWh<extra></extra>",
+            customdata=imp,
+        ), row=2, col=1)
+        # Net cost line on area chart
+        fig.add_trace(go.Scatter(
+            x=months, y=net_cost, name="Net Cost \u20ac",
+            mode="lines+markers", yaxis="y2",
+            line={"color": "#ff6b6b", "width": 2, "dash": "dot"},
+            marker={"size": 5},
+            hovertemplate="%{x}<br>Net cost: \u20ac%{y:.2f}<extra></extra>",
+        ), row=2, col=1)
+
+        fig.update_layout(
+            **_PLOT_LAYOUT, height=420,
+            uirevision="monthly",
+        )
+        fig.update_layout(legend={"orientation": "h", "y": 0.45, "x": 0.5,
+                                  "xanchor": "center", "font": {"size": 10}})
+        # Area chart axes
+        fig.update_yaxes(title_text="kWh", row=2, col=1)
+        fig.update_xaxes(row=2, col=1)
+        _apply_crosshair(fig)
+        return fig
+
+    # -------------------------------------------------------------------
+    # A5. Weather forecast (7-day)
+    # -------------------------------------------------------------------
+
+    # WMO weather code → icon/description mapping
+    _WMO_ICONS = {
+        0: ("☀️", "Clear"), 1: ("🌤️", "Mainly clear"), 2: ("⛅", "Partly cloudy"),
+        3: ("☁️", "Overcast"), 45: ("🌫️", "Fog"), 48: ("🌫️", "Fog"),
+        51: ("🌦️", "Light drizzle"), 53: ("🌦️", "Drizzle"), 55: ("🌧️", "Heavy drizzle"),
+        61: ("🌧️", "Light rain"), 63: ("🌧️", "Rain"), 65: ("🌧️", "Heavy rain"),
+        71: ("🌨️", "Light snow"), 73: ("🌨️", "Snow"), 75: ("🌨️", "Heavy snow"),
+        80: ("🌦️", "Light showers"), 81: ("🌧️", "Showers"), 82: ("⛈️", "Heavy showers"),
+        95: ("⛈️", "Thunderstorm"), 96: ("⛈️", "Thunderstorm"), 99: ("⛈️", "Thunderstorm"),
+    }
+
+    @app.callback(
+        [Output("weather-today-hours", "children"),
+         Output("weather-tomorrow-hours", "children"),
+         Output("weather-cloud-cover", "children"),
+         Output("weather-outlook", "children"),
+         Output("weather-7day-table", "children"),
+         Output("weather-generation-chart", "figure")],
+        Input("interval-analytics", "n_intervals"),
+    )
+    def update_weather(_n):
+        data = _api_get("/weather")
+        empty_fig = go.Figure()
+        empty_fig.update_layout(**_PLOT_LAYOUT, height=180)
+
+        if data is None or data.get("forecast") is None:
+            return "--", "--", "--", "--", "", empty_fig
+
+        forecast = data["forecast"]
+        today_h = forecast.get("today_solar_hours", 0)
+        tomorrow_h = forecast.get("tomorrow_solar_hours", 0)
+        cloud = forecast.get("tomorrow_cloud_cover_pct", 0)
+        is_sunny = forecast.get("tomorrow_is_sunny", False)
+        outlook = (html.Span("☀️ Sunny", className="text-warning")
+                   if is_sunny else html.Span("☁️ Cloudy", className="text-muted"))
+
+        # --- 7-day table ---
+        days = forecast.get("days", [])
+        if days:
+            day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            header = html.Thead(html.Tr([
+                html.Th("Day", className="small"),
+                html.Th("", className="small"),
+                html.Th("Sun", className="small text-end"),
+                html.Th("Cloud", className="small text-end"),
+                html.Th("Rain", className="small text-end"),
+                html.Th("Temp", className="small text-end"),
+                html.Th("Est. kWh", className="small text-end"),
+            ]), className="table-dark")
+
+            rows = []
+            for i, d in enumerate(days):
+                date_str = d.get("date", "")
+                try:
+                    from datetime import datetime as _dt
+                    dt = _dt.strptime(date_str, "%Y-%m-%d")
+                    day_label = day_names[dt.weekday()]
+                    short_date = date_str[5:]  # MM-DD
+                except Exception:
+                    day_label = ""
+                    short_date = date_str
+
+                wcode = d.get("weather_code", 0)
+                icon, _ = _WMO_ICONS.get(wcode, ("❓", "Unknown"))
+
+                sun_h = d.get("sunshine_hours", 0)
+                cloud_pct = d.get("cloud_cover_pct", 0)
+                precip = d.get("precipitation_mm", 0)
+                t_max = d.get("temp_max")
+                t_min = d.get("temp_min")
+                est = d.get("estimated_kwh", 0)
+
+                temp_str = ""
+                if t_max is not None and t_min is not None:
+                    temp_str = f"{t_min:.0f}/{t_max:.0f}°"
+
+                # Color est_kwh
+                if est >= 4:
+                    est_cls = "small text-end fw-bold text-warning"
+                elif est >= 2:
+                    est_cls = "small text-end text-success"
+                else:
+                    est_cls = "small text-end text-muted"
+
+                # Highlight today
+                row_cls = "table-active" if i == 0 else ""
+
+                rows.append(html.Tr([
+                    html.Td(f"{day_label} {short_date}", className="small"),
+                    html.Td(icon, className="small text-center"),
+                    html.Td(f"{sun_h:.1f}h", className="small text-end text-warning"),
+                    html.Td(f"{cloud_pct:.0f}%", className="small text-end"),
+                    html.Td(f"{precip:.1f}" if precip > 0 else "-",
+                             className="small text-end text-info"),
+                    html.Td(temp_str, className="small text-end"),
+                    html.Td(f"{est:.1f}", className=est_cls),
+                ], className=row_cls))
+
+            table = dbc.Table(
+                [header, html.Tbody(rows)],
+                bordered=True, dark=True, hover=True, size="sm",
+                responsive=True, className="mb-1",
+            )
+        else:
+            table = html.P("No forecast data", className="text-muted small")
+
+        # --- Generation bar chart ---
+        fig = go.Figure()
+        if days:
+            dates = [d.get("date", "")[5:] for d in days]  # MM-DD
+            est_kwhs = [d.get("estimated_kwh", 0) for d in days]
+            sun_hours = [d.get("sunshine_hours", 0) for d in days]
+
+            # Color bars by estimate
+            colors = []
+            for e in est_kwhs:
+                if e >= 4:
+                    colors.append("#ffc107")
+                elif e >= 2:
+                    colors.append("#28a745")
+                else:
+                    colors.append("#6c757d")
+
+            fig.add_trace(go.Bar(
+                x=dates, y=est_kwhs,
+                name="Est. kWh",
+                marker_color=colors,
+                text=[f"{e:.1f}" for e in est_kwhs],
+                textposition="outside",
+                textfont={"size": 10, "color": "white"},
+                hovertemplate="%{x}<br>Est: %{y:.1f} kWh<extra></extra>",
+            ))
+
+            # Add sunshine hours as line overlay
+            fig.add_trace(go.Scatter(
+                x=dates, y=sun_hours,
+                name="Sun hrs",
+                yaxis="y2",
+                line={"color": "#ffc107", "width": 1.5, "dash": "dot"},
+                mode="lines+markers",
+                marker={"size": 4},
+                hovertemplate="%{x}<br>Sun: %{y:.1f}h<extra></extra>",
+            ))
+
+        fig.update_layout(
+            **_PLOT_LAYOUT, height=180,
+            yaxis_title="kWh",
+            yaxis2={"overlaying": "y", "side": "right", "title": "hrs",
+                     "gridcolor": "rgba(0,0,0,0)",
+                     "showgrid": False},
+            showlegend=False,
+            uirevision="weather-gen",
+        )
+        _apply_crosshair(fig)
+
+        return (f"{today_h:.1f}", f"{tomorrow_h:.1f}", f"{cloud:.0f}",
+                outlook, table, fig)
