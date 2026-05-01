@@ -1,0 +1,25 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "api_client.c"
+        "data_model.c"
+        "wifi_manager.c"
+        "ui/ui_dashboard.c"
+        "ui/ui_control.c"
+        "ui/ui_energy.c"
+        "ui/ui_settings.c"
+    INCLUDE_DIRS
+        "."
+        "ui"
+    REQUIRES
+        esp_http_client
+        esp_wifi
+        nvs_flash
+        esp_netif
+        json
+        esp_lcd
+        esp_lcd_touch
+        esp_timer
+        esp_psram
+        driver
+)
