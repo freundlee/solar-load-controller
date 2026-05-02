@@ -253,3 +253,49 @@ async def esp32_set_config(
     """Update a strategy config parameter."""
     db.set_config(req.key, req.value)
     return {"ok": True, "key": req.key, "value": req.value}
+
+
+# ---------------------------------------------------------------------------
+# ESP32 ↔ VPS: Strategy management (API-key protected proxy)
+# ---------------------------------------------------------------------------
+
+class StrategySetRequest(BaseModel):
+    name: str = Field(..., description="Strategy name to activate")
+
+
+@router.get("/strategies")
+async def esp32_get_strategies(
+    request: Request,
+    _key: str = Depends(_verify_api_key),
+):
+    """Return available strategies and the currently active one.
+
+    Response mirrors GET /api/strategies so the ESP32 uses a single
+    authenticated endpoint without needing separate API access.
+    """
+    _, _, strategy = _get_services(request)
+    from app.services.strategies import STRATEGIES
+    return {
+        "strategies": list(STRATEGIES.keys()),
+        "active": strategy.active_strategy_name,
+    }
+
+
+@router.post("/strategies")
+async def esp32_set_strategy(
+    req: StrategySetRequest,
+    request: Request,
+    _key: str = Depends(_verify_api_key),
+):
+    """Switch the active strategy from the ESP32 console."""
+    _, _, strategy = _get_services(request)
+    from app.services.strategies import STRATEGIES
+    if req.name not in STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown strategy '{req.name}'. "
+                   f"Available: {list(STRATEGIES.keys())}",
+        )
+    strategy.set_strategy(req.name)
+    logger.info("ESP32 switched strategy to '%s'", req.name)
+    return {"ok": True, "active": req.name}

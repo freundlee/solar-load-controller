@@ -9,6 +9,8 @@ Two-page routing:
 """
 
 import logging
+import os
+import zoneinfo
 from datetime import datetime, timezone
 
 import dash
@@ -24,6 +26,21 @@ from app.services.strategies import list_strategies
 logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000/api"
+
+# Local timezone for chart display (reads TZ env var, falls back to Europe/Berlin)
+_LOCAL_TZ = zoneinfo.ZoneInfo(os.environ.get("TZ", "Europe/Berlin"))
+
+
+def _to_local_ts(utc_ts: str) -> str:
+    """Convert a UTC ISO timestamp string to a naive local-time ISO string for Plotly."""
+    try:
+        dt = datetime.fromisoformat(utc_ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        return utc_ts
+
 
 # Strategy descriptions cache
 _STRATEGY_DESCS: dict[str, str] = {}
@@ -428,7 +445,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
         if data:
             fig.add_trace(go.Scatter(
-                x=[r["timestamp"] for r in data],
+                x=[_to_local_ts(r["timestamp"]) for r in data],
                 y=[r["power_w"] for r in data],
                 name="Grid (W)",
                 line={"color": "#17a2b8", "width": 2},
@@ -502,7 +519,8 @@ def register_callbacks(app: dash.Dash) -> None:
         meter_sorted = sorted(meter_data, key=lambda x: x.get("timestamp", ""))
         load_sorted = sorted(load_data, key=lambda x: x.get("timestamp", ""))
 
-        m_ts = [r["timestamp"] for r in meter_sorted]
+        m_ts_raw = [r["timestamp"] for r in meter_sorted]
+        m_ts = [_to_local_ts(ts) for ts in m_ts_raw]
         m_pw = [r["power_w"] for r in meter_sorted]
 
         # Build a step-interpolated load series aligned to meter timestamps
@@ -585,8 +603,8 @@ def register_callbacks(app: dash.Dash) -> None:
         if total_points >= 2:
             try:
                 from datetime import datetime as _dt
-                first = _dt.fromisoformat(m_ts[0].replace("Z", "+00:00"))
-                last = _dt.fromisoformat(m_ts[-1].replace("Z", "+00:00"))
+                first = _dt.fromisoformat(m_ts_raw[0].replace("Z", "+00:00"))
+                last = _dt.fromisoformat(m_ts_raw[-1].replace("Z", "+00:00"))
                 span_s = (last - first).total_seconds()
                 avg_interval = span_s / (total_points - 1) if total_points > 1 else 0
             except Exception:
