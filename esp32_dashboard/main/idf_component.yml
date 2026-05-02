@@ -1,8 +1,0 @@
-dependencies:
-  idf: ">=5.5"
-  espressif/esp_brookesia: ">=0.4.1"
-  espressif/esp_lcd_st7701: "*"
-  espressif/esp_lcd_touch_gt911: "*"
-  espressif/esp_hosted: "*"
-  espressif/esp_wifi_remote: "*"
-  espressif/es8311: "*"
