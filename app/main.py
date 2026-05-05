@@ -19,6 +19,7 @@ from app.services.strategy_engine import StrategyEngine
 from app.services.weather_service import WeatherService
 from app.routes.api_routes import router as api_router
 from app.routes.esp32_routes import router as esp32_router
+from app.routes.iometer_routes import router as iometer_router
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,7 @@ def create_app() -> FastAPI:
     # REST API
     app.include_router(api_router)
     app.include_router(esp32_router)
+    app.include_router(iometer_router)
 
     # Mount Dash dashboard
     try:

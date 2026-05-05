@@ -518,7 +518,7 @@ def _iometer_status_card() -> dbc.Card:
             html.I(className="fas fa-wifi me-2"),
             "IOMeter",
         ], className="py-2"),
-        dbc.CardBody(
+        dbc.CardBody([
             dbc.Row([
                 dbc.Col([
                     html.I(className="fas fa-circle me-1", id="iometer-conn-icon"),
@@ -536,9 +536,26 @@ def _iometer_status_card() -> dbc.Card:
                     html.Span("Meter: ", className="text-muted small"),
                     html.Span("--", id="iometer-meter-no", className="small"),
                 ], xs=3),
-            ]),
-            className="p-2",
-        ),
+            ], className="mb-2"),
+            # Cumulative consumption row (only shown when total_consumption_wh is available)
+            html.Div(id="iometer-cumulative-row", children=[
+                html.Hr(className="my-1"),
+                dbc.Row([
+                    dbc.Col([
+                        html.I(className="fas fa-tachometer-alt text-warning me-1"),
+                        html.Span("Meter Total Import:", className="text-muted small me-1"),
+                        html.Span("--", id="iometer-total-import", className="small fw-bold text-warning"),
+                        html.Span(" kWh", className="text-muted small"),
+                    ], xs=6),
+                    dbc.Col([
+                        html.I(className="fas fa-calendar-day text-info me-1"),
+                        html.Span("Today Import:", className="text-muted small me-1"),
+                        html.Span("--", id="iometer-today-import", className="small fw-bold text-info"),
+                        html.Span(" kWh", className="text-muted small"),
+                    ], xs=6),
+                ]),
+            ], style={"display": "none"}),
+        ], className="p-2"),
     ], className="mb-3")
 
 
@@ -729,10 +746,11 @@ def _iometer_config_card() -> dbc.Card:
                         id="iometer-source-radio",
                         options=[
                             {"label": " LAN Direct", "value": "local"},
+                            {"label": " Remote Push (Mac/VPS→Server)", "value": "remote"},
                             {"label": " ESP32 Push (API)", "value": "esp32"},
                         ],
                         value="local",
-                        inline=True,
+                        inline=False,
                         className="small",
                     ),
                     xs=8,
@@ -760,12 +778,32 @@ def _iometer_config_card() -> dbc.Card:
                 ],
             ),
 
+            # Remote push info (visible in remote mode)
+            html.Div(
+                id="iometer-remote-info",
+                children=[
+                    dbc.Alert([
+                        html.I(className="fas fa-cloud-upload-alt me-2"),
+                        html.Strong("Remote Push mode"), html.Br(),
+                        "Your home Mac mini / Raspberry Pi sends readings to:",
+                        html.Br(),
+                        html.Code("POST /api/iometer/push", className="small"),
+                        html.Br(),
+                        html.Small([
+                            "Set ", html.Code("IOMETER_PUSH_KEY"),
+                            " (or ", html.Code("ESP32_API_KEY"), ") in .env"
+                        ], className="text-muted"),
+                    ], color="info", className="small mb-0 py-2"),
+                ],
+                style={"display": "none"},
+            ),
+
             # ESP32 info (only visible in ESP32 mode)
             html.Div(
                 id="iometer-esp32-info",
                 children=[
                     dbc.Alert([
-                        html.I(className="fas fa-info-circle me-2"),
+                        html.I(className="fas fa-microchip me-2"),
                         "ESP32 pushes data via ",
                         html.Code("POST /api/esp32/meter"),
                         " endpoint.",

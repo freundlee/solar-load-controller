@@ -745,13 +745,16 @@ def register_callbacks(app: dash.Dash) -> None:
             Output("iometer-signal", "children"),
             Output("iometer-battery", "children"),
             Output("iometer-meter-no", "children"),
+            Output("iometer-total-import", "children"),
+            Output("iometer-today-import", "children"),
+            Output("iometer-cumulative-row", "style"),
         ],
         Input("interval-slow", "n_intervals"),
     )
     def update_iometer_status(_n):
         data = _api_get("/data")
         if data is None:
-            return "fas fa-circle text-muted", "--", "--", "--", "--"
+            return "fas fa-circle text-muted", "--", "--", "--", "--", "--", "--", {"display": "none"}
 
         meter = data.get("meter", {})
         connected = meter.get("connected", False)
@@ -769,7 +772,24 @@ def register_callbacks(app: dash.Dash) -> None:
         batt_text = f"{batt}%" if batt is not None else "--"
         meter_no = meter.get("meter_number") or "--"
 
-        return icon_class, conn_text, signal, batt_text, meter_no
+        # Cumulative consumption (only available in remote / esp32 push modes)
+        total_wh = meter.get("total_consumption_wh")
+        cumulative_row_style = {"display": "none"}
+        total_kwh_text = "--"
+        today_kwh_text = "--"
+
+        if total_wh is not None:
+            cumulative_row_style = {"display": "block"}
+            total_kwh_text = f"{total_wh / 1000:.1f}"
+
+            # Today's import: get from daily_energy table via analytics
+            energy_today = _api_get("/daily-energy?days=1")
+            if energy_today and len(energy_today) > 0:
+                today_import_wh = energy_today[0].get("grid_import_wh", 0)
+                today_kwh_text = f"{today_import_wh / 1000:.2f}"
+
+        return (icon_class, conn_text, signal, batt_text, meter_no,
+                total_kwh_text, today_kwh_text, cumulative_row_style)
 
     # ===================================================================
     # ADMIN PAGE callbacks
@@ -894,22 +914,26 @@ def register_callbacks(app: dash.Dash) -> None:
             raise dash.exceptions.PreventUpdate
         source = config.get("iometer_source", "local")
         host = config.get("iometer_host", "192.168.178.96")
-        status_text = f"Mode: {'LAN Direct' if source == 'local' else 'ESP32 Push'}"
+        mode_labels = {"local": "LAN Direct", "remote": "Remote Push", "esp32": "ESP32 Push"}
+        status_text = f"Mode: {mode_labels.get(source, source)}"
         return source, host, status_text
 
     # ------------------------------------------------------------------
-    # 16. IOMeter config — toggle host input / ESP32 info visibility
+    # 16. IOMeter config — toggle host input / remote info / ESP32 info
     # ------------------------------------------------------------------
 
     @app.callback(
         [Output("iometer-host-group", "style"),
+         Output("iometer-remote-info", "style"),
          Output("iometer-esp32-info", "style")],
         Input("iometer-source-radio", "value"),
     )
     def toggle_iometer_mode(source):
+        if source == "remote":
+            return {"display": "none"}, {"display": "block"}, {"display": "none"}
         if source == "esp32":
-            return {"display": "none"}, {"display": "block"}
-        return {"display": "block"}, {"display": "none"}
+            return {"display": "none"}, {"display": "none"}, {"display": "block"}
+        return {"display": "block"}, {"display": "none"}, {"display": "none"}
 
     # ------------------------------------------------------------------
     # 17. IOMeter config — save
@@ -935,8 +959,8 @@ def register_callbacks(app: dash.Dash) -> None:
             results.append(r2)
 
         if all(r and r.get("success") for r in results):
-            mode_label = "LAN Direct" if source == "local" else "ESP32 Push"
-            msg = f"Saved: {mode_label}"
+            mode_labels = {"local": "LAN Direct", "remote": "Remote Push", "esp32": "ESP32 Push"}
+            msg = f"Saved: {mode_labels.get(source, source)}"
             if source == "local":
                 msg += f" ({host})"
             return dbc.Alert(msg, color="success", duration=4000)

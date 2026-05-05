@@ -59,11 +59,13 @@ async def get_dashboard_data(request: Request):
 
     meter_reading = iometer.latest
     meter_power = meter_reading.power_w if meter_reading else None
+    meter_consumption_wh = meter_reading.total_consumption_wh if meter_reading else None
 
     return {
         "anker": anker.get_dashboard_data(),
         "meter": {
             "power_w": meter_power,
+            "total_consumption_wh": meter_consumption_wh,
             "connected": iometer.status.connected,
             "bridge_rssi": iometer.status.bridge_rssi,
             "battery_level": iometer.status.battery_level,

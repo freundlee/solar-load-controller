@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 IOMETER_SOURCE_LOCAL = "local"
 IOMETER_SOURCE_ESP32 = "esp32"
+IOMETER_SOURCE_REMOTE = "remote"   # pushed from home LAN via /api/iometer/push
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -243,13 +244,13 @@ class IOMeterService:
         while self._running:
             source = db.get_config("iometer_source", IOMETER_SOURCE_LOCAL)
 
-            if source == IOMETER_SOURCE_ESP32:
-                # In ESP32 mode: don't poll locally, but check for stale data
+            if source in (IOMETER_SOURCE_ESP32, IOMETER_SOURCE_REMOTE):
+                # In push mode: don't poll locally, but check for stale data
                 if self._last_push_time > 0:
                     stale_s = time.monotonic() - self._last_push_time
-                    if stale_s > 60:
+                    if stale_s > 120:
                         self.status.connected = False
-                        logger.debug("ESP32 push data stale (%.0fs)", stale_s)
+                        logger.debug("Push data stale (%.0fs)", stale_s)
                 await asyncio.sleep(poll_interval)
             else:
                 # Refresh host from config in case it changed at runtime
