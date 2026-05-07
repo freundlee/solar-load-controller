@@ -28,7 +28,7 @@ jobs:
         run: |
           docker service update \
             --image ${{ steps.tag.outputs.IMAGE_TAG }} \
-            --env-add ANKER_EMAIL="${{ secrets.ANKER_EMAIL }}" \
+            --env-add ANKER_EMAIL="${{ secrets.ANKER_EMAIL }}" \ 
             --env-add ANKER_PASSWORD="${{ secrets.ANKER_PASSWORD }}" \
             --with-registry-auth \
             solar-dashboard
