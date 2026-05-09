@@ -1768,6 +1768,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
         fig.update_layout(
             **_PLOT_LAYOUT, height=180,
+            xaxis_type="category",
             yaxis_title="kWh",
             yaxis2={"overlaying": "y", "side": "right", "title": "hrs",
                      "gridcolor": "rgba(0,0,0,0)",
