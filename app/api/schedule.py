@@ -1383,7 +1383,7 @@ async def set_sb2_home_load(  # noqa: C901
     # identify week days to be used, default to todays weekday or all
     days: list[str] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
     weekdays = (
-        {int(datetime.now().strftime("%w"))}
+        {int(datetime.now(self.local_tz).strftime("%w"))}
         if rate_plan and not delete_plan
         else set(range(7))
     )
@@ -1497,7 +1497,7 @@ async def set_sb2_home_load(  # noqa: C901
     if rate_plan_name in {SolarbankRatePlan.manual, SolarbankRatePlan.smartplugs} and (
         preset is not None or pending_insert
     ):
-        now = datetime.now().time().replace(microsecond=0)
+        now = datetime.now(self.local_tz).time().replace(microsecond=0)
         last_time = datetime.strptime("00:00", "%H:%M").time()
         # set now to new daytime if close to end of day to determine which slot to modify
         if now >= datetime.strptime("23:59:58", "%H:%M:%S").time():
