@@ -304,7 +304,7 @@ class EnergyTracker:
             return
 
         now = time.monotonic()
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(db.get_display_tz()).strftime("%Y-%m-%d")
 
         # Reset on new day
         if today != self._today_date:

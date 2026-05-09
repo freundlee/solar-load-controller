@@ -534,7 +534,7 @@ async def set_home_load(  # noqa: C901
     new_ranges = []
     # update individual values in current slot or insert SolarbankTimeslot and adjust adjacent slots
     if not set_slot:
-        now = datetime.now().time().replace(microsecond=0)
+        now = datetime.now(self.local_tz).time().replace(microsecond=0)
         last_time = datetime.strptime("00:00", "%H:%M").time()
         # set now to new daytime if close to end of day to determine which slot to modify
         if now >= datetime.strptime("23:59:58", "%H:%M:%S").time():
@@ -1911,7 +1911,7 @@ async def set_sb2_ac_charge(
         ).get("param_data") or {}
 
     rate_plan_name = SolarbankRatePlan.backup
-    dtn = datetime.now().replace(second=0, microsecond=0).astimezone()
+    dtn = datetime.now(self.local_tz).replace(second=0, microsecond=0)
     # create new structure if none exists yet or get old times if not provided for validation
     if not (new_rate_plan := schedule.get(rate_plan_name) or {}):
         new_rate_plan["ranges"] = []
@@ -1920,11 +1920,11 @@ async def set_sb2_ac_charge(
         if not backup_start:
             backup_start = datetime.fromtimestamp(
                 (new_rate_plan.get("ranges") or [{}])[0].get("start_time") or 0, UTC
-            ).astimezone()
+            ).astimezone(self.local_tz)
         if not backup_end:
             backup_end = datetime.fromtimestamp(
                 (new_rate_plan.get("ranges") or [{}])[0].get("end_time") or 0, UTC
-            ).astimezone()
+            ).astimezone(self.local_tz)
 
     if backup_switch is None:
         backup_switch = bool(new_rate_plan.get("switch"))
@@ -2215,14 +2215,14 @@ async def set_sb2_use_time(  # noqa: C901
         if start_month is not None
         else end_month
         if end_month is not None
-        else datetime.now().month
+        else datetime.now(self.local_tz).month
     )
     find_hour = (
         start_hour
         if start_hour is not None
         else end_hour - 1
         if end_hour is not None
-        else datetime.now().hour
+        else datetime.now(self.local_tz).hour
     )
 
     # set parameters for the deletion scope, starting from smallest to largest
@@ -2242,7 +2242,7 @@ async def set_sb2_use_time(  # noqa: C901
     # set defaults if needed
     def_day_type = (
         SolixDayTypes.WEEKDAY
-        if 0 < int(datetime.now().strftime("%w")) < 6
+        if 0 < int(datetime.now(self.local_tz).strftime("%w")) < 6
         else SolixDayTypes.WEEKEND
     )
     def_currency = (
