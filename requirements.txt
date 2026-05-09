@@ -22,3 +22,4 @@ cffi==1.17.1
 python-dotenv==1.0.0
 aiofiles==23.2.1
 pydantic==2.9.0
+tzdata==2025.2

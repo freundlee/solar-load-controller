@@ -728,6 +728,79 @@ def _operations_page() -> html.Div:
 # PAGE: Admin Panel
 # ===================================================================
 
+def _timezone_config_card() -> dbc.Card:
+    """Admin card for configuring the display timezone."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-clock me-2"),
+            "Display Timezone",
+        ], className="py-2"),
+        dbc.CardBody([
+            html.P(
+                "Set the timezone used for all timestamps and charts.",
+                className="text-muted small mb-2",
+            ),
+
+            # Auto-detect row
+            dbc.Row([
+                dbc.Col(
+                    dbc.Button(
+                        [html.I(className="fas fa-location-crosshairs me-1"), "Auto-detect"],
+                        id="tz-autodetect-btn",
+                        color="info",
+                        size="sm",
+                        outline=True,
+                        className="w-100",
+                    ),
+                    xs=12, className="mb-2",
+                ),
+            ]),
+
+            # Timezone selector
+            dbc.Row([
+                dbc.Col(html.Label("Timezone", className="small"), xs=4),
+                dbc.Col(
+                    dcc.Dropdown(
+                        id="tz-dropdown",
+                        options=[],          # populated by callback
+                        value=None,          # populated by callback
+                        placeholder="Loading…",
+                        clearable=False,
+                        className="small",
+                        style={
+                            "backgroundColor": "#222",
+                            "color": "#fff",
+                            "fontSize": "0.85rem",
+                        },
+                    ),
+                    xs=8,
+                ),
+            ], className="mb-2 align-items-center"),
+
+            # Server time preview
+            dbc.Row([
+                dbc.Col(html.Label("Server local time", className="small"), xs=4),
+                dbc.Col(
+                    html.Span("--", id="tz-server-local",
+                              className="small fw-bold text-info"),
+                    xs=8,
+                ),
+            ], className="mb-2 align-items-center"),
+
+            # Hidden store used by the clientside auto-detect callback
+            dcc.Store(id="tz-browser-store"),
+
+            dbc.Button(
+                [html.I(className="fas fa-save me-1"), "Save"],
+                id="tz-save-btn",
+                color="success", size="sm",
+                className="mt-2 w-100",
+            ),
+            html.Div(id="tz-save-msg", className="mt-2 small"),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
 def _iometer_config_card() -> dbc.Card:
     """Admin card for configuring IOMeter data source."""
     return dbc.Card([
@@ -841,6 +914,7 @@ def _admin_page() -> html.Div:
         # IOMeter data source config at top
         dbc.Row([
             dbc.Col(_iometer_config_card(), xs=12, lg=6),
+            dbc.Col(_timezone_config_card(), xs=12, lg=6),
         ], className="mb-3"),
 
         dbc.Row([

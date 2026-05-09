@@ -144,6 +144,14 @@ def init_db() -> None:
                 (key, json.dumps(value)),
             )
 
+        # Seed display timezone (falls back to TZ env var, then Europe/Berlin)
+        import os as _os
+        _default_tz = _os.environ.get("TZ", "Europe/Berlin")
+        conn.execute(
+            "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
+            ("display_timezone", json.dumps(_default_tz)),
+        )
+
         # Seed appliance profiles
         existing = conn.execute("SELECT COUNT(*) FROM appliance_profiles").fetchone()[0]
         if existing == 0:

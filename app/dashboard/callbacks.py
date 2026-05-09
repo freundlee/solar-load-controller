@@ -27,8 +27,15 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000/api"
 
-# Local timezone for chart display (reads TZ env var, falls back to Europe/Berlin)
-_LOCAL_TZ = zoneinfo.ZoneInfo(os.environ.get("TZ", "Europe/Berlin"))
+
+def _get_local_tz() -> zoneinfo.ZoneInfo:
+    """Read the display timezone from the API (persisted in DB). Never cached at module level."""
+    data = _api_get("/timezone")
+    tz_name = (data or {}).get("current", "") or os.environ.get("TZ", "Europe/Berlin")
+    try:
+        return zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        return zoneinfo.ZoneInfo("Europe/Berlin")
 
 
 def _to_local_ts(utc_ts: str) -> str:
@@ -37,7 +44,7 @@ def _to_local_ts(utc_ts: str) -> str:
         dt = datetime.fromisoformat(utc_ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(_LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S")
+        return dt.astimezone(_get_local_tz()).strftime("%Y-%m-%dT%H:%M:%S")
     except Exception:
         return utc_ts
 
@@ -270,7 +277,7 @@ def register_callbacks(app: dash.Dash) -> None:
             )
         plugs_content = plug_rows if plug_rows else [html.Span("No plugs", className="text-muted small")]
 
-        now_str = datetime.now().strftime("%H:%M:%S")
+        now_str = datetime.now(_get_local_tz()).strftime("%H:%M:%S")
         connected = "Connected" if meter.get("connected") else "Disconnected"
         init = "OK" if anker.get("initialized") else "N/A"
         footer = f"Anker {init} | Meter {connected} | {now_str}"
@@ -1772,3 +1779,74 @@ def register_callbacks(app: dash.Dash) -> None:
 
         return (f"{today_h:.1f}", f"{tomorrow_h:.1f}", f"{cloud:.0f}",
                 outlook, table, fig)
+
+    # ===================================================================
+    # TIMEZONE CONFIG callbacks (Admin page)
+    # ===================================================================
+
+    # TZ-1: Populate dropdown from API on page load / interval
+    @app.callback(
+        Output("tz-dropdown", "options"),
+        Output("tz-dropdown", "value"),
+        Output("tz-server-local", "children"),
+        Input("url", "pathname"),
+        Input("interval-slow", "n_intervals"),
+    )
+    def load_timezone_config(pathname, _n):
+        data = _api_get("/timezone")
+        if not data:
+            return [], None, "--"
+        current = data.get("current", "Europe/Berlin")
+        options = [{"label": tz, "value": tz} for tz in data.get("available", [current])]
+        server_local = data.get("server_local", "--")
+        return options, current, server_local
+
+    # TZ-2: Clientside callback — reads browser timezone into the Store
+    app.clientside_callback(
+        """
+        function(n_clicks) {
+            if (!n_clicks) return window.dash_clientside.no_update;
+            try {
+                var tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                return tz;
+            } catch(e) {
+                return window.dash_clientside.no_update;
+            }
+        }
+        """,
+        Output("tz-browser-store", "data"),
+        Input("tz-autodetect-btn", "n_clicks"),
+        prevent_initial_call=True,
+    )
+
+    # TZ-3: When browser Store is populated, push value into the dropdown
+    @app.callback(
+        Output("tz-dropdown", "value", allow_duplicate=True),
+        Input("tz-browser-store", "data"),
+        prevent_initial_call=True,
+    )
+    def apply_detected_tz(browser_tz):
+        if not browser_tz:
+            return no_update
+        return browser_tz
+
+    # TZ-4: Save button — POST to /api/timezone
+    @app.callback(
+        Output("tz-save-msg", "children"),
+        Input("tz-save-btn", "n_clicks"),
+        State("tz-dropdown", "value"),
+        prevent_initial_call=True,
+    )
+    def save_timezone(n_clicks, tz_value):
+        if not n_clicks or not tz_value:
+            return no_update
+        try:
+            resp = requests.post(
+                f"{API_BASE}/timezone",
+                params={"tz": tz_value},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            return dbc.Alert(f"Saved: {tz_value}", color="success", duration=4000)
+        except Exception as exc:
+            return dbc.Alert(f"Error: {exc}", color="danger", duration=4000)

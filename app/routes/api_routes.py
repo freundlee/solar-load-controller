@@ -1,6 +1,7 @@
 """FastAPI REST API routes."""
 
 import logging
+import zoneinfo
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -179,6 +180,66 @@ async def get_config():
 async def update_config(req: ConfigUpdateRequest):
     db.set_config(req.key, req.value)
     return {"success": True, "key": req.key, "value": req.value}
+
+
+# ---------------------------------------------------------------------------
+# Timezone configuration
+# ---------------------------------------------------------------------------
+
+# Curated list of common IANA timezones for the UI dropdown
+_COMMON_TIMEZONES = [
+    "UTC",
+    "Europe/Berlin", "Europe/London", "Europe/Paris", "Europe/Rome",
+    "Europe/Madrid", "Europe/Amsterdam", "Europe/Brussels", "Europe/Zurich",
+    "Europe/Vienna", "Europe/Warsaw", "Europe/Prague", "Europe/Stockholm",
+    "Europe/Helsinki", "Europe/Athens", "Europe/Bucharest", "Europe/Istanbul",
+    "Europe/Moscow",
+    "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+    "America/Phoenix", "America/Anchorage", "America/Honolulu",
+    "America/Toronto", "America/Vancouver", "America/Sao_Paulo",
+    "America/Mexico_City", "America/Bogota", "America/Lima",
+    "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Seoul",
+    "Asia/Singapore", "Asia/Kolkata", "Asia/Dubai", "Asia/Bangkok",
+    "Asia/Jakarta", "Asia/Taipei", "Asia/Karachi", "Asia/Dhaka",
+    "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
+    "Australia/Perth", "Pacific/Auckland", "Pacific/Auckland",
+    "Africa/Cairo", "Africa/Nairobi", "Africa/Johannesburg",
+]
+
+
+@router.get("/timezone")
+async def get_timezone():
+    """Return current display timezone and available timezone list."""
+    current = db.get_config("display_timezone", "Europe/Berlin")
+    # Validate stored value; fall back if invalid
+    try:
+        zoneinfo.ZoneInfo(current)
+    except Exception:
+        current = "Europe/Berlin"
+
+    # Deduplicate and ensure current is in the list
+    tz_set = dict.fromkeys(_COMMON_TIMEZONES)
+    if current not in tz_set:
+        tz_set[current] = None
+    available = list(tz_set.keys())
+
+    return {
+        "current": current,
+        "available": available,
+        "server_utc": datetime.now(timezone.utc).isoformat(),
+        "server_local": datetime.now(zoneinfo.ZoneInfo(current)).strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@router.post("/timezone")
+async def set_timezone(tz: str):
+    """Persist a new display timezone. Validates the IANA name first."""
+    try:
+        zoneinfo.ZoneInfo(tz)
+    except zoneinfo.ZoneInfoNotFoundError:
+        raise HTTPException(400, f"Unknown timezone: {tz!r}")
+    db.set_config("display_timezone", tz)
+    return {"success": True, "timezone": tz}
 
 
 # ---------------------------------------------------------------------------

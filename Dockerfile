@@ -1,8 +1,9 @@
 FROM python:3.12-slim
 
-# System deps
+# System deps (tzdata needed for zoneinfo in slim image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
