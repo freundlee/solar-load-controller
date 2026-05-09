@@ -180,7 +180,7 @@ class StrategyEngine:
         avg_60 = self.iometer.get_average_power(60)
 
         # Get historical patterns for predictive strategy
-        hour_avg_load = db.get_hourly_avg_load(datetime.now().hour)
+        hour_avg_load = db.get_hourly_avg_load(datetime.now(db.get_display_tz()).hour)
 
         ctx = StrategyContext(
             meter_instant_w=meter_w,

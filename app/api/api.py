@@ -9,9 +9,10 @@ pip install aiofiles
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aiohttp import ClientSession
 
@@ -79,6 +80,7 @@ class AnkerSolixApi(AnkerSolixBaseApi):
         websession: ClientSession | None = None,
         logger: logging.Logger | None = None,
         apisession: AnkerSolixClientSession | None = None,
+        local_tz: ZoneInfo | None = None,
     ) -> None:
         """Initialize."""
         super().__init__(
@@ -89,6 +91,7 @@ class AnkerSolixApi(AnkerSolixBaseApi):
             logger=logger,
             apisession=apisession,
         )
+        self.local_tz: ZoneInfo = local_tz or ZoneInfo("Europe/Berlin")
         # link previous api methods to apisession for refactoring backward compatibility
         self.request_count = self.apisession.request_count
         self.async_authenticate = self.apisession.async_authenticate
@@ -480,7 +483,8 @@ class AnkerSolixApi(AnkerSolixBaseApi):
                                     }
                                 )
                         # get actual presets from current slot
-                        now: datetime = datetime.now().time().replace(microsecond=0)
+                        _local_now = datetime.now(self.local_tz)
+                        now: datetime = _local_now.time().replace(microsecond=0)
                         sys_power = None
                         dev_power = None
                         # set now to new daytime if close to end of day
@@ -489,8 +493,8 @@ class AnkerSolixApi(AnkerSolixBaseApi):
                         if generation >= 2:
                             # Solarbank 2 schedule, weekday starts with 0=Sunday)
                             # datetime isoweekday starts with 1=Monday - 7 = Sunday, strftime('%w') starts also 0 = Sunday
-                            weekday = int(datetime.now().strftime("%w"))
-                            month = datetime.now().month
+                            weekday = int(_local_now.strftime("%w"))
+                            month = _local_now.month
                             # get rate_plan_name depending on use usage mode_type
                             rate_plan_name = getattr(
                                 SolarbankRatePlan,
@@ -555,7 +559,7 @@ class AnkerSolixApi(AnkerSolixBaseApi):
                                     {
                                         "preset_usage_mode": SolarbankUsageMode.backup
                                         if switch
-                                        and start < datetime.now().timestamp() < end
+                                        and start < datetime.now(timezone.utc).timestamp() < end
                                         else mode_type,
                                         "preset_manual_backup_start": start,
                                         "preset_manual_backup_end": end,

@@ -14,6 +14,7 @@ from aiohttp import ClientSession
 from app.api import api
 from app.api.apitypes import SolarbankUsageMode
 from app.config import anker_cfg
+from app import database as db
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class AnkerService:
                 anker_cfg.country,
                 self._session,
                 api_logger,
+                local_tz=db.get_display_tz(),
             )
             if not await self._api.async_authenticate():
                 logger.error("Anker API authentication failed")

@@ -3,10 +3,12 @@
 import sqlite3
 import json
 import logging
+import os as _os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.config import DB_PATH, StrategyDefaults
 
@@ -145,7 +147,6 @@ def init_db() -> None:
             )
 
         # Seed display timezone (falls back to TZ env var, then Europe/Berlin)
-        import os as _os
         _default_tz = _os.environ.get("TZ", "Europe/Berlin")
         conn.execute(
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
@@ -192,6 +193,15 @@ def get_all_config() -> dict:
     with get_db() as conn:
         rows = conn.execute("SELECT key, value FROM config").fetchall()
         return {r["key"]: json.loads(r["value"]) for r in rows}
+
+
+def get_display_tz() -> ZoneInfo:
+    """Return the user-configured display timezone (default Europe/Berlin)."""
+    tz_name = get_config("display_timezone", _os.environ.get("TZ", "Europe/Berlin"))
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return ZoneInfo("Europe/Berlin")
 
 
 # ---------------------------------------------------------------------------
@@ -390,15 +400,25 @@ def get_daily_energy_for_date(date_str: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+def _utc_offset_seconds() -> str:
+    """Return the display timezone's current UTC offset as an SQLite modifier string, e.g. '+7200 seconds'."""
+    tz = get_display_tz()
+    offset = datetime.now(tz).utcoffset()
+    total = int(offset.total_seconds()) if offset else 0
+    sign = "+" if total >= 0 else "-"
+    return f"{sign}{abs(total)} seconds"
+
+
 def get_hourly_avg_load(hour: int, days_back: int = 7) -> float | None:
     """Get average load setting for a given hour based on recent history."""
+    offset_mod = _utc_offset_seconds()
     with get_db() as conn:
         row = conn.execute(
             """SELECT AVG(new_load_w) as avg_load
                FROM load_changes
                WHERE timestamp >= datetime('now', ?)
-               AND CAST(strftime('%H', timestamp) AS INTEGER) = ?""",
-            (f"-{days_back} days", hour),
+               AND CAST(strftime('%H', datetime(timestamp, ?)) AS INTEGER) = ?""",
+            (f"-{days_back} days", offset_mod, hour),
         ).fetchone()
         if row and row["avg_load"] is not None:
             return float(row["avg_load"])
@@ -407,10 +427,11 @@ def get_hourly_avg_load(hour: int, days_back: int = 7) -> float | None:
 
 def get_hourly_stats(days_back: int = 7) -> list[dict]:
     """Get per-hour average meter readings and load for recent days."""
+    offset_mod = _utc_offset_seconds()
     with get_db() as conn:
         rows = conn.execute(
             """SELECT
-                 CAST(strftime('%H', timestamp) AS INTEGER) as hour,
+                 CAST(strftime('%H', datetime(timestamp, ?)) AS INTEGER) as hour,
                  AVG(power_w) as avg_power_w,
                  MIN(power_w) as min_power_w,
                  MAX(power_w) as max_power_w,
@@ -419,7 +440,7 @@ def get_hourly_stats(days_back: int = 7) -> list[dict]:
                WHERE timestamp >= datetime('now', ?)
                GROUP BY hour
                ORDER BY hour""",
-            (f"-{days_back} days",),
+            (offset_mod, f"-{days_back} days"),
         ).fetchall()
         return [dict(r) for r in rows]
 

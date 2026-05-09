@@ -60,8 +60,8 @@ def _persist_daily_energy(anker: AnkerService) -> None:
     read the smart meter directly).  Preserve any meter-derived values that
     the EnergyTracker already wrote so they don't get overwritten with 0.
     """
-    from datetime import date
-    today_str = date.today().isoformat()
+    from datetime import datetime as _dt
+    today_str = _dt.now(db.get_display_tz()).date().isoformat()
 
     # Read existing row so we can preserve meter-based import/export
     existing = db.get_daily_energy_for_date(today_str) or {}
