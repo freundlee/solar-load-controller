@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - dev
 
 jobs:
   build-deploy:
@@ -14,22 +15,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set image tag
-        id: tag
-        run: echo "IMAGE_TAG=10.10.0.3:5000/solar-dashboard:${{ github.run_number }}" >> $GITHUB_OUTPUT
+      - name: Configure environment
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            SERVICE="solar-dashboard"
+            IMAGE="solar-dashboard"
+          else
+            SERVICE="solar-dashboard-${{ github.ref_name }}"
+            IMAGE="solar-dashboard-${{ github.ref_name }}"
+          fi
+          echo "SERVICE_NAME=$SERVICE" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=10.10.0.3:5000/$IMAGE:${{ github.run_number }}" >> $GITHUB_OUTPUT
 
       - name: Build image
-        run: docker build -t ${{ steps.tag.outputs.IMAGE_TAG }} .
+        run: docker build -t ${{ steps.env.outputs.IMAGE_TAG }} .
 
       - name: Push to registry
-        run: docker push ${{ steps.tag.outputs.IMAGE_TAG }}
+        run: docker push ${{ steps.env.outputs.IMAGE_TAG }}
 
       - name: Update swarm service
         run: |
           docker service update \
-            --image ${{ steps.tag.outputs.IMAGE_TAG }} \
+            --image ${{ steps.env.outputs.IMAGE_TAG }} \
             --env-add ANKER_EMAIL="${{ secrets.ANKER_EMAIL }}" \
             --env-add ANKER_PASSWORD="${{ secrets.ANKER_PASSWORD }}" \
-            --label-add "traefik.http.routers.solar.middlewares=auth@swarm" \
             --with-registry-auth \
-            solar-dashboard
+            ${{ steps.env.outputs.SERVICE_NAME }}
