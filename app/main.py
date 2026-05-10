@@ -17,6 +17,7 @@ from app.services.iometer_service import IOMeterService
 from app.services.anker_service import AnkerService
 from app.services.strategy_engine import StrategyEngine
 from app.services.weather_service import WeatherService
+from app.middleware import TimezoneMiddleware
 from app.routes.api_routes import router as api_router
 from app.routes.esp32_routes import router as esp32_router
 from app.routes.iometer_routes import router as iometer_router
@@ -181,6 +182,9 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(esp32_router)
     app.include_router(iometer_router)
+
+    # Middleware: auto-convert UTC timestamps to display timezone in API responses
+    app.add_middleware(TimezoneMiddleware)
 
     # Mount Dash dashboard
     try:

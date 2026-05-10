@@ -9,9 +9,6 @@ Two-page routing:
 """
 
 import logging
-import os
-import zoneinfo
-from datetime import datetime, timezone
 
 import dash
 import dash_bootstrap_components as dbc
@@ -26,27 +23,6 @@ from app.services.strategies import list_strategies
 logger = logging.getLogger(__name__)
 
 API_BASE = "http://127.0.0.1:8000/api"
-
-
-def _get_local_tz() -> zoneinfo.ZoneInfo:
-    """Read the display timezone from the API (persisted in DB). Never cached at module level."""
-    data = _api_get("/timezone")
-    tz_name = (data or {}).get("current", "") or os.environ.get("TZ", "Europe/Berlin")
-    try:
-        return zoneinfo.ZoneInfo(tz_name)
-    except Exception:
-        return zoneinfo.ZoneInfo("Europe/Berlin")
-
-
-def _to_local_ts(utc_ts: str) -> str:
-    """Convert a UTC ISO timestamp string to a naive local-time ISO string for Plotly."""
-    try:
-        dt = datetime.fromisoformat(utc_ts.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(_get_local_tz()).strftime("%Y-%m-%dT%H:%M:%S")
-    except Exception:
-        return utc_ts
 
 
 # Strategy descriptions cache
@@ -277,7 +253,9 @@ def register_callbacks(app: dash.Dash) -> None:
             )
         plugs_content = plug_rows if plug_rows else [html.Span("No plugs", className="text-muted small")]
 
-        now_str = datetime.now(_get_local_tz()).strftime("%H:%M:%S")
+        # Use the already-localised timestamp from the API response
+        ts = data.get("timestamp", "")
+        now_str = ts.split("T")[1][:8] if "T" in ts else ""
         connected = "Connected" if meter.get("connected") else "Disconnected"
         init = "OK" if anker.get("initialized") else "N/A"
         footer = f"Anker {init} | Meter {connected} | {now_str}"
@@ -452,7 +430,7 @@ def register_callbacks(app: dash.Dash) -> None:
 
         if data:
             fig.add_trace(go.Scatter(
-                x=[_to_local_ts(r["timestamp"]) for r in data],
+                x=[r["timestamp"] for r in data],
                 y=[r["power_w"] for r in data],
                 name="Grid (W)",
                 line={"color": "#17a2b8", "width": 2},
@@ -527,7 +505,7 @@ def register_callbacks(app: dash.Dash) -> None:
         load_sorted = sorted(load_data, key=lambda x: x.get("timestamp", ""))
 
         m_ts_raw = [r["timestamp"] for r in meter_sorted]
-        m_ts = [_to_local_ts(ts) for ts in m_ts_raw]
+        m_ts = list(m_ts_raw)
         m_pw = [r["power_w"] for r in meter_sorted]
 
         # Build a step-interpolated load series aligned to meter timestamps
@@ -878,7 +856,7 @@ def register_callbacks(app: dash.Dash) -> None:
         for e in events[:30]:
             ts = e.get("timestamp", "")
             try:
-                ts = ts.split("T")[1][:5] if "T" in ts else ts[-8:]
+                ts = ts.split("T")[1][:5] if "T" in ts else ts[:5]
             except Exception:
                 pass
             reason = e.get("reason", "")
