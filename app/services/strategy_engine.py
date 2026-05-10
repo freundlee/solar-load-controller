@@ -421,5 +421,5 @@ class EnergyTracker:
             "grid_import_kwh": round(self._import_wh / 1000, 3),
             "grid_export_kwh": round(self._export_wh / 1000, 3),
             "home_consumption_kwh": round(self._consumption_wh / 1000, 3),
-            "using_counters": self._using_counters,
+            "import_from_counter": self._import_from_counter,
         }
