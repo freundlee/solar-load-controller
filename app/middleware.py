@@ -88,9 +88,12 @@ class TimezoneMiddleware(BaseHTTPMiddleware):
             # If anything goes wrong, return the original body untouched.
             pass
 
+        # Drop the stale Content-Length; Response will recalculate it.
+        headers = {k: v for k, v in response.headers.items()
+                   if k.lower() != "content-length"}
         return Response(
             content=body,
             status_code=response.status_code,
-            headers=dict(response.headers),
+            headers=headers,
             media_type="application/json",
         )
