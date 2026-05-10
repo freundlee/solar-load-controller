@@ -282,9 +282,16 @@ class StrategyEngine:
 # ---------------------------------------------------------------------------
 
 class EnergyTracker:
-    """Estimates grid import/export energy from meter power readings.
+    """Calculates grid import/export energy from meter readings.
 
-    Since readings come every ~5s, we integrate power over time to get Wh.
+    Import: Uses meter cumulative counter OBIS 1-0:1.8.0 (difference
+    between current value and start-of-day value).  This is the most
+    accurate method since the meter itself integrates power.
+
+    Export: The meter does not provide OBIS 2.8.0, so export is
+    calculated via trapezoidal integration of negative power readings
+    (power_w < 0 means feeding into the grid).
+
     Resets daily. Persists to DB periodically.
     """
 
@@ -296,9 +303,40 @@ class EnergyTracker:
         self._export_wh: float = 0.0
         self._consumption_wh: float = 0.0
         self._last_persist_time: float = 0.0
+        # Meter counter baseline (start-of-day value for OBIS 1.8.0)
+        self._day_start_consumption_wh: float | None = None
+        self._import_from_counter: bool = False
+        # Restore baseline from DB (survives restarts)
+        self._load_day_start()
+
+    def _load_day_start(self) -> None:
+        """Load start-of-day meter counter value from DB config."""
+        today = datetime.now(db.get_display_tz()).strftime("%Y-%m-%d")
+        saved_date = db.get_config("meter_day_start_date", "")
+        if saved_date == today:
+            v = db.get_config("meter_day_start_consumption_wh", "")
+            if v:
+                self._day_start_consumption_wh = float(v)
+                self._today_date = today
+                logger.info(
+                    "EnergyTracker restored day-start counter for %s: "
+                    "consumption=%.1f Wh",
+                    today, self._day_start_consumption_wh,
+                )
+            # Restore accumulated export (trapezoidal, lost on restart)
+            v = db.get_config("meter_today_export_wh", "")
+            if v:
+                self._export_wh = float(v)
+
+    def _save_day_start(self) -> None:
+        """Persist start-of-day meter counter value to DB config."""
+        db.set_config("meter_day_start_date", self._today_date)
+        if self._day_start_consumption_wh is not None:
+            db.set_config("meter_day_start_consumption_wh",
+                          str(self._day_start_consumption_wh))
 
     def update(self, iometer: IOMeterService, anker: AnkerService) -> None:
-        """Called every tick (~5s). Integrates power to energy."""
+        """Called every tick (~5s). Updates import/export from meter."""
         reading = iometer.latest
         if reading is None:
             return
@@ -306,31 +344,50 @@ class EnergyTracker:
         now = time.monotonic()
         today = datetime.now(db.get_display_tz()).strftime("%Y-%m-%d")
 
-        # Reset on new day
+        # --- Day rollover ---
         if today != self._today_date:
             self._today_date = today
             self._import_wh = 0.0
             self._export_wh = 0.0
             self._consumption_wh = 0.0
+            self._day_start_consumption_wh = reading.total_consumption_wh
+            self._save_day_start()
             self._last_reading_time = now
             self._last_power_w = reading.power_w
             return
 
+        # --- Capture baseline on first reading with counter ---
+        if (self._day_start_consumption_wh is None
+                and reading.total_consumption_wh is not None):
+            self._day_start_consumption_wh = reading.total_consumption_wh
+            self._save_day_start()
+
+        # --- Import from meter counter (OBIS 1.8.0) ---
+        if (self._day_start_consumption_wh is not None
+                and reading.total_consumption_wh is not None):
+            self._import_wh = max(
+                0, reading.total_consumption_wh - self._day_start_consumption_wh)
+            self._import_from_counter = True
+        else:
+            self._import_from_counter = False
+
+        # --- Trapezoidal integration for export + home consumption ---
         if self._last_reading_time is not None and self._last_power_w is not None:
             dt_hours = (now - self._last_reading_time) / 3600.0
-            if dt_hours > 0 and dt_hours < 0.5:  # max 30min gap, ignore longer gaps
-                # Trapezoidal integration (average of last and current)
+            if 0 < dt_hours < 0.5:  # max 30min gap
                 avg_power = (self._last_power_w + reading.power_w) / 2.0
-                energy_wh = avg_power * dt_hours
 
-                if avg_power > 0:
-                    self._import_wh += energy_wh
-                else:
-                    self._export_wh += abs(energy_wh)
+                # Export: always trapezoidal (no 2.8.0 counter available)
+                if avg_power < 0:
+                    self._export_wh += abs(avg_power * dt_hours)
 
-                # Estimate home consumption from load + meter
+                # Import fallback: trapezoidal when no counter
+                if not self._import_from_counter and avg_power > 0:
+                    self._import_wh += avg_power * dt_hours
+
+                # Estimate home consumption (always trapezoidal)
                 load_w = anker.current_load_w
-                home_power = load_w + avg_power  # load is what battery provides, meter is grid delta
+                home_power = load_w + avg_power
                 if home_power > 0:
                     self._consumption_wh += home_power * dt_hours
 
@@ -364,4 +421,5 @@ class EnergyTracker:
             "grid_import_kwh": round(self._import_wh / 1000, 3),
             "grid_export_kwh": round(self._export_wh / 1000, 3),
             "home_consumption_kwh": round(self._consumption_wh / 1000, 3),
+            "using_counters": self._using_counters,
         }

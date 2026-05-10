@@ -304,8 +304,8 @@ def register_callbacks(app: dash.Dash) -> None:
             f"{anker.get('today_charge_kwh', 0):.2f}",
             f"{anker.get('today_discharge_kwh', 0):.2f}",
             f"{anker.get('today_usage_kwh', 0):.2f}",
-            f"{anker.get('today_grid_import_kwh', 0):.2f}",
-            f"{anker.get('today_grid_export_kwh', 0):.2f}",
+            f"{strategy.get('energy', {}).get('grid_import_kwh', 0):.2f}",
+            f"{strategy.get('energy', {}).get('grid_export_kwh', 0):.2f}",
             # Smart plugs
             plugs_content,
             f"{len(plugs)}",
@@ -767,11 +767,11 @@ def register_callbacks(app: dash.Dash) -> None:
             cumulative_row_style = {"display": "block"}
             total_kwh_text = f"{total_wh / 1000:.1f}"
 
-            # Today's import: get from daily_energy table via analytics
-            energy_today = _api_get("/daily-energy?days=1")
-            if energy_today and len(energy_today) > 0:
-                today_import_wh = energy_today[0].get("grid_import_wh", 0)
-                today_kwh_text = f"{today_import_wh / 1000:.2f}"
+            # Today's import: use EnergyTracker (same source as other displays)
+            strategy = data.get("strategy", {})
+            energy = strategy.get("energy", {})
+            today_import_kwh = energy.get("grid_import_kwh", 0)
+            today_kwh_text = f"{today_import_kwh:.3f}"
 
         return (icon_class, conn_text, signal, batt_text, meter_no,
                 total_kwh_text, today_kwh_text, cumulative_row_style)

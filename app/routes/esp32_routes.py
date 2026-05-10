@@ -182,8 +182,8 @@ async def get_esp32_dashboard(
         "mi_kwh": anker.today_mi_kwh,
         "charge_kwh": anker.today_charge_kwh,
         "discharge_kwh": anker.today_discharge_kwh,
-        "import_kwh": anker.today_grid_import_kwh,
-        "export_kwh": anker.today_grid_export_kwh,
+        "import_kwh": strat.get("energy", {}).get("grid_import_kwh", 0),
+        "export_kwh": strat.get("energy", {}).get("grid_export_kwh", 0),
         # Timestamp
         "ts": datetime.now(timezone.utc).isoformat(),
     }
