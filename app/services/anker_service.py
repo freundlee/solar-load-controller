@@ -32,6 +32,7 @@ class AnkerService:
         # Cached dashboard data (refreshed by poller)
         self.solar_power_w: float = 0.0
         self.battery_soc: float = 0.0          # 0-100 %
+        self.battery_reserve_soc: float | None = None  # min discharge SOC from API
         self.battery_power_w: float = 0.0      # charging power
         self.output_power_w: float = 0.0
         self.current_load_w: int = 0            # device preset
@@ -174,6 +175,9 @@ class AnkerService:
                 if sn == self._device_sn:
                     preset = device.get("preset_system_output_power", 0)
                     self.current_load_w = int(float(preset or 0))
+                    cutoff = device.get("power_cutoff")
+                    if isinstance(cutoff, (int, float)):
+                        self.battery_reserve_soc = float(cutoff)
                     # Cache schedule from device data
                     if "schedule" in device:
                         self.schedule = device["schedule"]
@@ -237,6 +241,18 @@ class AnkerService:
             await self._api.update_device_details()
             await self._api.update_site_details()
             await self._api.update_device_energy()
+            # Refresh reserve/min SOC (power cutoff) used by control logic.
+            try:
+                await self._api.get_power_cutoff(
+                    deviceSn=self._device_sn,
+                    siteId=self._site_id or "",
+                )
+                device = self._api.devices.get(self._device_sn or "") or {}
+                cutoff = device.get("power_cutoff")
+                if isinstance(cutoff, (int, float)):
+                    self.battery_reserve_soc = float(cutoff)
+            except Exception as exc:
+                logger.debug("Unable to refresh power cutoff: %s", exc)
 
             # Read energy now — update_device_energy populates energy_details,
             # but the next update_sites() call will wipe it.
@@ -319,6 +335,7 @@ class AnkerService:
         return {
             "solar_power_w": self.solar_power_w,
             "battery_soc": self.battery_soc,
+            "battery_reserve_soc": self.battery_reserve_soc,
             "battery_power_w": self.battery_power_w,
             "output_power_w": self.output_power_w,
             "current_load_w": self.current_load_w,

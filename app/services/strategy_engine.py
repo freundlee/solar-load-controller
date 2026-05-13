@@ -167,6 +167,22 @@ class StrategyEngine:
         if self._last_set_load_w is not None:
             current_load = self._last_set_load_w
 
+        # Hard guard: once battery reaches reserve/min SOC, stop discharging.
+        reserve_soc = self.anker.battery_reserve_soc
+        if reserve_soc is not None and self.anker.battery_soc <= (reserve_soc + 0.1):
+            self._last_decision_notes = (
+                f"reserve_reached soc={self.anker.battery_soc:.1f}% "
+                f"reserve={reserve_soc:.1f}%"
+            )
+            if current_load > 0:
+                logger.info(
+                    "Reserve reached: soc=%.1f%% reserve=%.1f%%, forcing load to 0W",
+                    self.anker.battery_soc,
+                    reserve_soc,
+                )
+                await self._set_load(0, "battery_reserve_reached", meter_w, current_load)
+            return
+
         # Smart plug context
         plug_total_w = sum(p.get("power_w", 0) for p in self.anker.smart_plugs)
         self._plug_total_w = plug_total_w
