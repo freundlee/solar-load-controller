@@ -1,5 +1,8 @@
 """Class for interacting with the Anker Power / Solix API.
 
+Adapted from the reverse-engineered Anker Solix API by Thomas Luther:
+https://github.com/thomluther/ha-anker-solix
+
 Required Python modules:
 pip install cryptography
 pip install aiohttp

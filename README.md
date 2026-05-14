@@ -113,6 +113,10 @@ docker compose up -d --build
 
 Data (SQLite + auth cache) persists in the `solar-data` Docker volume.
 
+## Acknowledgements
+
+The Anker Solix cloud API client (`app/api/`) is adapted from the reverse-engineering work by [Thomas Luther](https://github.com/thomluther/ha-anker-solix). Without that foundational work this project would not be possible. His project is also MIT-licensed — if you find this useful, consider starring his repository too.
+
 ## License
 
-Private — for personal use.
+MIT — see [LICENSE](LICENSE).

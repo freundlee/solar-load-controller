@@ -1,4 +1,8 @@
-"""Anker Power/Solix Cloud API class to handle a client connection session for an account."""
+"""Anker Power/Solix Cloud API class to handle a client connection session for an account.
+
+Adapted from the reverse-engineered Anker Solix API by Thomas Luther:
+https://github.com/thomluther/ha-anker-solix
+"""
 
 from asyncio import sleep
 from base64 import b64decode, b64encode
