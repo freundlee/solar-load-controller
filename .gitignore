@@ -18,5 +18,9 @@ app/api/authcache/*.json
 # Private infrastructure docs
 cicd_api.md
 
+# Private deployment overrides (Swarm, Traefik, etc.)
+docker-compose.swarm.yml
+docker-compose.prod.yml
+
 # Private production Docker Swarm config
 docker-compose.swarm.yml
