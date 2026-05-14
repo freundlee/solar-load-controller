@@ -1,0 +1,24 @@
+# GitHub 仓库赞助按钮配置
+# 位置:仓库根目录下 .github/FUNDING.yml
+# 把下面的占位符换成你自己的用户名,不需要的行直接删掉或注释掉
+
+# GitHub Sponsors(需先到 https://github.com/sponsors 申请,德国账户可用)
+github: [freundlee]
+
+# Ko-fi(推荐先用,5 分钟注册:https://ko-fi.com)
+# ko_fi: your-kofi-username
+
+# Buy Me a Coffee(可选)
+# buy_me_a_coffee: your-bmc-username
+
+# Patreon(订阅制,适合长期项目)
+# patreon: your-patreon-username
+
+# Open Collective(团队/组织透明账目)
+# open_collective: your-collective
+
+# Liberapay(非营利、匿名)
+# liberapay: your-liberapay-username
+
+# 自定义链接(PayPal、个人主页等,最多 4 个)
+custom: ["https://paypal.me/freundlee"]
