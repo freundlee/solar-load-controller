@@ -5,8 +5,6 @@ Automatically controls Anker Solarbank 2 E1600 AC home load (0–800 W) based on
 ## Features
 
 - **Auto load control** — Reads the grid meter in real-time and adjusts the Solarbank home load to keep grid import near zero
-- **Spike detection** — Recognises short-lived appliance usage (microwave, kettle) vs sustained (oven, induction cooktop) and only adjusts for sustained loads
-- **Configurable appliance profiles** — Define power range, typical duration, and action (ignore / observe / adjust) for each appliance
 - **Manual control** — Slider + buttons to manually set load (0–800 W in 10 W steps)
 - **Real-time dashboard** — Solar production, battery SOC, meter reading, power flow visualisation
 - **Load history** — 24 h chart of load changes vs meter readings
@@ -23,6 +21,20 @@ FastAPI (REST API + lifespan tasks)
   └── Dash Dashboard   →  mounted at /dashboard, Bootstrap 5 dark theme
          └── SQLite    →  config, meter readings, load changes, profiles
 ```
+
+## Motivation
+
+This project was originally created to solve a very common pain point. After installing solar panels and the Anker Solix system, I realized that, like many other users, I did not have a smart meter installed — either because it wasn’t possible or due to cost considerations.
+
+Without a smart meter, it becomes difficult to monitor and control power output and household loads in real time. Even when using smart plugs, they cannot effectively manage all devices in a home. For example, regular lighting or high-power appliances (like heating devices) are usually not connected to smart plugs, so they cannot be intelligently controlled.
+
+To address this issue, I discovered a device called iometer, which can be easily integrated into a home environment. It also allows local access to its interface, making it very convenient to read real-time electricity usage data. Because of this, I highly recommend iometer as a solution for real-time energy monitoring.
+
+Based on these considerations, I integrated these components into a system that enables real-time monitoring and automated control through a dashboard. This dashboard can be accessed both on a computer and on a mobile device.
+
+In addition, in another project, I developed an ESP32-based real-time display terminal, which connects to the same web API to show live data.
+
+Overall, this integrated solution is convenient, accurate, and practical for daily use. Anyone who is interested is welcome to download and try it out.
 
 ## Quick Start
 
