@@ -1829,3 +1829,373 @@ def register_callbacks(app: dash.Dash) -> None:
             return dbc.Alert(f"Saved: {tz_value}", color="success", duration=4000)
         except Exception as exc:
             return dbc.Alert(f"Error: {exc}", color="danger", duration=4000)
+
+    # ===================================================================
+    # LOCATION CONFIG callbacks (Admin page)
+    # ===================================================================
+
+    # LOC-1: Load current location on page open / slow interval
+    @app.callback(
+        [Output("location-current-display", "children"),
+         Output("location-coords-display", "children")],
+        [Input("url", "pathname"),
+         Input("interval-slow", "n_intervals")],
+    )
+    def load_location_display(pathname, _n):
+        loc = _api_get("/weather/location")
+        if not loc:
+            return "--", "--"
+        city = loc.get("city_name", "--")
+        region = loc.get("region_name", "")
+        lat = loc.get("latitude", 0)
+        lon = loc.get("longitude", 0)
+        label = f"{city}, {region}" if region else city
+        coords = f"{lat:.4f}°N, {lon:.4f}°E"
+        return label, coords
+
+    # LOC-2: City search — trigger on button click
+    @app.callback(
+        [Output("location-geocode-store", "data"),
+         Output("location-results-dropdown", "options"),
+         Output("location-results-dropdown", "value")],
+        Input("location-search-btn", "n_clicks"),
+        State("location-search-input", "value"),
+        prevent_initial_call=True,
+    )
+    def search_location(n_clicks, query):
+        if not query or len(query.strip()) < 2:
+            return [], [], None
+
+        results = _api_get(f"/weather/geocode?q={query.strip()}&count=10")
+        if not results:
+            return [], [{"label": "No results found", "value": "", "disabled": True}], None
+
+        options = []
+        for r in results:
+            name = r.get("name", "")
+            admin1 = r.get("admin1", "")
+            admin2 = r.get("admin2", "")
+            country = r.get("country", "")
+            lat = r.get("latitude")
+            lon = r.get("longitude")
+            if lat is None or lon is None:
+                continue
+
+            # Build display label: "City, District, State, Country"
+            parts = [p for p in [name, admin2, admin1, country] if p]
+            label = ", ".join(parts)
+            # Store result index as value
+            options.append({"label": label, "value": str(len(options))})
+
+        return results, options, None
+
+    # LOC-3: When a result is selected, enable the save button and store the choice
+    @app.callback(
+        [Output("location-selected-store", "data"),
+         Output("location-save-btn", "disabled")],
+        Input("location-results-dropdown", "value"),
+        State("location-geocode-store", "data"),
+        prevent_initial_call=True,
+    )
+    def select_location_result(selected_idx, results):
+        if selected_idx is None or not results:
+            return None, True
+        try:
+            idx = int(selected_idx)
+            if 0 <= idx < len(results):
+                return results[idx], False
+        except (ValueError, TypeError):
+            pass
+        return None, True
+
+    # LOC-4: Save selected location
+    @app.callback(
+        [Output("location-save-msg", "children"),
+         Output("location-current-display", "children", allow_duplicate=True),
+         Output("location-coords-display", "children", allow_duplicate=True)],
+        Input("location-save-btn", "n_clicks"),
+        State("location-selected-store", "data"),
+        prevent_initial_call=True,
+    )
+    def save_location(n_clicks, selected):
+        if not n_clicks or not selected:
+            return no_update, no_update, no_update
+
+        lat = selected.get("latitude")
+        lon = selected.get("longitude")
+        city = selected.get("name", "")
+        admin1 = selected.get("admin1", "")
+        admin2 = selected.get("admin2", "")
+        country = selected.get("country", "")
+
+        # Build region label
+        region_parts = [p for p in [admin2, admin1, country] if p]
+        region = ", ".join(region_parts)
+
+        result = _api_post("/weather/location", {
+            "latitude": lat,
+            "longitude": lon,
+            "city_name": city,
+            "region_name": region,
+        })
+
+        if result and result.get("success"):
+            label = f"{city}, {region}" if region else city
+            coords = f"{lat:.4f}°N, {lon:.4f}°E"
+            return (
+                dbc.Alert(f"✓ Location saved: {label}", color="success", duration=5000),
+                label,
+                coords,
+            )
+        return (
+            dbc.Alert("Failed to save location", color="danger", duration=4000),
+            no_update,
+            no_update,
+        )
+
+    # LOC-5: Show location badge in weather forecast card header
+    @app.callback(
+        Output("weather-location-badge", "children"),
+        Input("interval-analytics", "n_intervals"),
+    )
+    def update_weather_location_badge(_n):
+        loc = _api_get("/weather/location")
+        if not loc:
+            return ""
+        city = loc.get("city_name", "")
+        region = loc.get("region_name", "")
+        lat = loc.get("latitude", 0)
+        lon = loc.get("longitude", 0)
+        if city:
+            return f"📍 {city}" + (f", {region.split(',')[0]}" if region else "")
+        return f"📍 {lat:.2f}°, {lon:.2f}°"
+
+    # ===================================================================
+    # FORECAST vs ACTUAL callbacks (Analytics page)
+    # ===================================================================
+
+    # FVA-1: Navigation — prev/next/today update offset store
+    @app.callback(
+        Output("forecast-nav-offset", "data"),
+        [Input("forecast-nav-prev", "n_clicks"),
+         Input("forecast-nav-next", "n_clicks"),
+         Input("forecast-nav-today", "n_clicks")],
+        State("forecast-nav-offset", "data"),
+        prevent_initial_call=True,
+    )
+    def update_forecast_nav_offset(prev_clicks, next_clicks, today_clicks, current_offset):
+        ctx = callback_context
+        if not ctx.triggered:
+            return no_update
+        btn_id = ctx.triggered[0]["prop_id"].split(".")[0]
+        offset = current_offset or 0
+        if btn_id == "forecast-nav-prev":
+            return offset + 1
+        if btn_id == "forecast-nav-next":
+            return max(0, offset - 1)
+        # today
+        return 0
+
+    # FVA-2: Disable "next" button when at current period (offset=0)
+    @app.callback(
+        [Output("forecast-nav-next", "disabled"),
+         Output("forecast-nav-today", "disabled")],
+        Input("forecast-nav-offset", "data"),
+    )
+    def update_nav_btn_state(offset):
+        at_current = (offset or 0) == 0
+        return at_current, at_current
+
+    # FVA-3: Main forecast vs actual chart + table + accuracy KPIs
+    @app.callback(
+        [Output("forecast-vs-actual-chart", "figure"),
+         Output("forecast-vs-actual-table", "children"),
+         Output("forecast-acc-mae", "children"),
+         Output("forecast-acc-over", "children"),
+         Output("forecast-acc-under", "children"),
+         Output("forecast-nav-label", "children")],
+        [Input("interval-analytics", "n_intervals"),
+         Input("forecast-nav-offset", "data")],
+    )
+    def update_forecast_vs_actual(_n, offset):
+        offset = offset or 0
+        days = 14
+
+        # Date range label
+        from datetime import date as _date, timedelta as _td
+        end_d = _date.today() + _td(days=7) - _td(days=offset * days)
+        start_d = end_d - _td(days=days)
+        nav_label = f"{start_d.strftime('%b %d')} – {end_d.strftime('%b %d')}"
+
+        data = _api_get(f"/weather/forecast-history?days={days}&offset={offset}") or []
+
+        empty_fig = go.Figure()
+        empty_fig.update_layout(**_PLOT_LAYOUT, height=300, uirevision="fva")
+        _apply_crosshair(empty_fig)
+
+        if not data:
+            no_data_msg = html.P(
+                "No forecast history yet. Forecasts are stored hourly once the "
+                "weather service has run.",
+                className="text-muted small fst-italic mt-2",
+            )
+            return empty_fig, no_data_msg, "--", "--", "--", nav_label
+
+        # Split into future (no actual yet) and past (has actuals)
+        dates = [d.get("date", "") for d in data]
+        forecast_kwh = [d.get("forecast_kwh") for d in data]
+        actual_kwh = [d.get("actual_kwh") for d in data]
+
+        # Accuracy metrics (only for past dates that have both values)
+        paired = [
+            (f, a) for f, a in zip(forecast_kwh, actual_kwh)
+            if f is not None and a is not None
+        ]
+        if paired:
+            errors = [f - a for f, a in paired]
+            mae = sum(abs(e) for e in errors) / len(errors)
+            over = sum(1 for e in errors if e > 0.1)   # over-estimated
+            under = sum(1 for e in errors if e < -0.1)  # under-estimated
+            mae_str = f"{mae:.2f} kWh"
+            over_str = f"{over}d"
+            under_str = f"{under}d"
+        else:
+            mae_str = over_str = under_str = "--"
+
+        # --- Chart ---
+        fig = go.Figure()
+
+        # Forecast bars (semi-transparent)
+        bar_colors = []
+        for f, a in zip(forecast_kwh, actual_kwh):
+            if a is None:
+                # Future: blue-grey
+                bar_colors.append("rgba(108,117,125,0.7)")
+            elif f is None:
+                bar_colors.append("rgba(108,117,125,0.4)")
+            else:
+                # Past: color by accuracy
+                err_pct = abs(f - a) / a * 100 if a > 0 else 0
+                if err_pct < 15:
+                    bar_colors.append("rgba(40,167,69,0.7)")   # good: green
+                elif err_pct < 30:
+                    bar_colors.append("rgba(255,193,7,0.7)")   # ok: yellow
+                else:
+                    bar_colors.append("rgba(220,53,69,0.7)")   # bad: red
+
+        fig.add_trace(go.Bar(
+            x=dates,
+            y=[v if v is not None else 0 for v in forecast_kwh],
+            name="Forecast kWh",
+            marker_color=bar_colors,
+            text=[f"{v:.1f}" if v is not None else "" for v in forecast_kwh],
+            textposition="outside",
+            textfont={"size": 9, "color": "rgba(255,255,255,0.7)"},
+            hovertemplate="%{x}<br>Forecast: %{y:.2f} kWh<extra></extra>",
+        ))
+
+        # Actual dots + line (only where data exists)
+        actual_dates = [d for d, a in zip(dates, actual_kwh) if a is not None]
+        actual_vals = [a for a in actual_kwh if a is not None]
+
+        if actual_dates:
+            fig.add_trace(go.Scatter(
+                x=actual_dates,
+                y=actual_vals,
+                name="Actual kWh",
+                mode="lines+markers",
+                line={"color": "#ffc107", "width": 2.5},
+                marker={"size": 8, "symbol": "circle",
+                         "color": "#ffc107", "line": {"width": 2, "color": "#fff"}},
+                hovertemplate="%{x}<br>Actual: %{y:.2f} kWh<extra></extra>",
+            ))
+
+            # Error bars (vertical lines between forecast and actual)
+            for d, f, a in zip(dates, forecast_kwh, actual_kwh):
+                if f is not None and a is not None:
+                    err_color = ("rgba(220,53,69,0.6)" if f > a
+                                 else "rgba(40,167,69,0.6)")
+                    fig.add_shape(
+                        type="line",
+                        x0=d, x1=d,
+                        y0=min(f, a), y1=max(f, a),
+                        line={"color": err_color, "width": 2, "dash": "dot"},
+                    )
+
+        # Today marker
+        today_str = _date.today().isoformat()
+        if today_str in dates:
+            fig.add_vline(
+                x=dates.index(today_str),
+                line_dash="dash",
+                line_color="rgba(255,255,255,0.4)",
+                annotation_text="Today",
+                annotation_font_size=10,
+                annotation_font_color="rgba(255,255,255,0.6)",
+            )
+
+        fig.update_layout(
+            **_PLOT_LAYOUT, height=300,
+            yaxis_title="kWh",
+            xaxis_type="category",
+            bargap=0.3,
+            uirevision=f"fva-{offset}",
+        )
+        _apply_crosshair(fig)
+
+        # --- Detail table ---
+        t_header = html.Thead(html.Tr([
+            html.Th("Date", className="small"),
+            html.Th("Forecast", className="small text-end"),
+            html.Th("Actual", className="small text-end"),
+            html.Th("Error", className="small text-end"),
+            html.Th("Sun hrs", className="small text-end"),
+            html.Th("Cloud", className="small text-end"),
+        ]), className="table-dark")
+
+        t_rows = []
+        for d in data:
+            date_str = d.get("date", "")
+            short_date = date_str[5:] if len(date_str) >= 10 else date_str
+            fcast = d.get("forecast_kwh")
+            act = d.get("actual_kwh")
+            sun_h = d.get("forecast_sun_h")
+            cloud_pct = d.get("forecast_cloud_pct")
+
+            if fcast is not None and act is not None:
+                err = fcast - act
+                err_pct = err / act * 100 if act > 0 else 0
+                err_cls = "text-danger" if abs(err_pct) > 25 else (
+                    "text-warning" if abs(err_pct) > 10 else "text-success")
+                err_str = f"{err:+.1f} ({err_pct:+.0f}%)"
+            elif fcast is not None:
+                err_cls = "text-muted"
+                err_str = "—"
+            else:
+                err_cls = "text-muted"
+                err_str = "—"
+
+            # Highlight today
+            is_today = (date_str == today_str)
+            row_cls = "table-active fw-bold" if is_today else ""
+
+            t_rows.append(html.Tr([
+                html.Td(short_date, className="small"),
+                html.Td(f"{fcast:.1f}" if fcast is not None else "—",
+                         className="small text-end text-info"),
+                html.Td(f"{act:.1f}" if act is not None else "—",
+                         className="small text-end text-warning"),
+                html.Td(err_str, className=f"small text-end {err_cls}"),
+                html.Td(f"{sun_h:.1f}h" if sun_h is not None else "—",
+                         className="small text-end text-muted"),
+                html.Td(f"{cloud_pct:.0f}%" if cloud_pct is not None else "—",
+                         className="small text-end text-muted"),
+            ], className=row_cls))
+
+        table = dbc.Table(
+            [t_header, html.Tbody(t_rows)],
+            bordered=True, dark=True, hover=True, size="sm",
+            responsive=True, className="mt-2",
+        )
+
+        return fig, table, mae_str, over_str, under_str, nav_label

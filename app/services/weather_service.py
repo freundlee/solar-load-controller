@@ -17,6 +17,8 @@ from typing import Optional
 
 import aiohttp
 
+from app import database as db
+
 logger = logging.getLogger(__name__)
 
 # Open-Meteo API (free, no key needed)
@@ -49,10 +51,19 @@ class WeatherService:
         return self._session
 
     async def get_forecast(self) -> dict | None:
-        """Get solar forecast. Returns cached data if fresh."""
+        """Get solar forecast. Returns cached data if fresh.
+
+        Coordinates are read from the DB config on every refresh so location
+        changes from the admin panel take effect without a restart.
+        """
         now = time.time()
         if self._cache and (now - self._cache_time) < self._cache_ttl:
             return self._cache
+
+        # Reload lat/lon from DB config (allows runtime location changes)
+        self.latitude = db.get_config("weather_latitude", self.latitude)
+        self.longitude = db.get_config("weather_longitude", self.longitude)
+        self.pv_kwp = db.get_config("pv_kwp", self.pv_kwp)
 
         try:
             session = await self._ensure_session()
@@ -75,6 +86,8 @@ class WeatherService:
             forecast = self._parse_forecast(data)
             self._cache = forecast
             self._cache_time = now
+            # Persist forecast snapshots to DB for history tracking
+            self._store_forecast_snapshots(forecast)
             return forecast
 
         except Exception as exc:
@@ -150,3 +163,20 @@ class WeatherService:
     async def close(self) -> None:
         if self._session and not self._session.closed:
             await self._session.close()
+
+    def _store_forecast_snapshots(self, forecast: dict) -> None:
+        """Persist each forecast day as a snapshot for history tracking."""
+        fetched_at = forecast.get("fetched_at", datetime.now(timezone.utc).isoformat())
+        for day in forecast.get("days", []):
+            try:
+                db.insert_forecast_snapshot(
+                    forecast_date=day["date"],
+                    fetched_at=fetched_at,
+                    estimated_kwh=day.get("estimated_kwh", 0.0),
+                    sunshine_hours=day.get("sunshine_hours", 0.0),
+                    cloud_cover_pct=day.get("cloud_cover_pct", 0.0),
+                    weather_code=day.get("weather_code", 0),
+                    radiation_mj=day.get("radiation_mj", 0.0),
+                )
+            except Exception as exc:
+                logger.debug("Forecast snapshot store failed for %s: %s", day.get("date"), exc)

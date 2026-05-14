@@ -901,6 +901,100 @@ def _iometer_config_card() -> dbc.Card:
     ], className="mb-3")
 
 
+def _location_config_card() -> dbc.Card:
+    """Admin card for configuring weather location (city/coordinates)."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-map-marker-alt me-2"),
+            "Weather Location",
+        ], className="py-2"),
+        dbc.CardBody([
+            html.P(
+                "Set your location for accurate solar forecast.",
+                className="text-muted small mb-2",
+            ),
+
+            # Current location display
+            dbc.Row([
+                dbc.Col(html.Label("Current", className="small"), xs=3),
+                dbc.Col(
+                    html.Span("--", id="location-current-display",
+                              className="small fw-bold text-info"),
+                    xs=9,
+                ),
+            ], className="mb-2 align-items-center"),
+
+            # Coordinates display
+            dbc.Row([
+                dbc.Col(html.Label("Lat / Lon", className="small"), xs=3),
+                dbc.Col(
+                    html.Span("--", id="location-coords-display",
+                              className="small text-muted"),
+                    xs=9,
+                ),
+            ], className="mb-3 align-items-center"),
+
+            html.Hr(className="my-2"),
+
+            # City search
+            html.Label("Search city", className="small fw-bold"),
+            dbc.InputGroup([
+                dbc.Input(
+                    id="location-search-input",
+                    type="text",
+                    placeholder="e.g. Munich, Berlin, Hamburg…",
+                    size="sm",
+                    className="bg-dark text-light border-secondary",
+                ),
+                dbc.Button(
+                    [html.I(className="fas fa-search")],
+                    id="location-search-btn",
+                    color="info",
+                    size="sm",
+                    outline=True,
+                    n_clicks=0,
+                ),
+            ], className="mb-2"),
+
+            # Search results dropdown
+            html.Div(
+                id="location-results-container",
+                children=[
+                    dcc.Dropdown(
+                        id="location-results-dropdown",
+                        options=[],
+                        value=None,
+                        placeholder="Search results will appear here…",
+                        clearable=True,
+                        className="small",
+                        style={
+                            "backgroundColor": "#222",
+                            "color": "#fff",
+                            "fontSize": "0.85rem",
+                        },
+                    ),
+                ],
+                className="mb-2",
+            ),
+
+            # Hidden stores
+            dcc.Store(id="location-selected-store", data=None),
+            dcc.Store(id="location-geocode-store", data=[]),
+
+            # Save button
+            dbc.Button(
+                [html.I(className="fas fa-save me-1"), "Save Location"],
+                id="location-save-btn",
+                color="success",
+                size="sm",
+                className="mt-1 w-100",
+                disabled=True,
+            ),
+            html.Div(id="location-save-msg", className="mt-2 small"),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
 def _admin_page() -> html.Div:
     return html.Div([
         html.H5([
@@ -915,6 +1009,7 @@ def _admin_page() -> html.Div:
         ], className="mb-3"),
 
         dbc.Row([
+            dbc.Col(_location_config_card(), xs=12, lg=6),
             dbc.Col(_strategy_config_card(), xs=12, lg=6),
         ]),
 
@@ -1029,7 +1124,10 @@ def _weather_forecast_card() -> dbc.Card:
         dbc.CardHeader([
             html.I(className="fas fa-cloud-sun me-2"),
             "7-Day Solar Forecast",
-        ], className="py-2"),
+            # Location badge
+            html.Span(id="weather-location-badge",
+                      className="ms-2 text-muted small fst-italic"),
+        ], className="py-2 d-flex align-items-center"),
         dbc.CardBody([
             # Summary row (today + tomorrow highlights)
             dbc.Row([
@@ -1068,6 +1166,75 @@ def _weather_forecast_card() -> dbc.Card:
             dcc.Graph(id="weather-generation-chart",
                       config={"displayModeBar": False, "scrollZoom": False},
                       style={"height": "180px"}),
+        ], className="p-2"),
+    ], className="mb-3")
+
+
+def _forecast_vs_actual_card() -> dbc.Card:
+    """Forecast accuracy chart: predicted vs actual solar generation with navigation."""
+    return dbc.Card([
+        dbc.CardHeader([
+            html.I(className="fas fa-chart-line me-2"),
+            "Forecast vs Actual Solar",
+            # Navigation controls
+            html.Div([
+                dbc.Button(
+                    html.I(className="fas fa-chevron-left"),
+                    id="forecast-nav-prev",
+                    color="secondary",
+                    size="sm",
+                    outline=True,
+                    className="px-2 py-1",
+                    n_clicks=0,
+                ),
+                html.Span("--", id="forecast-nav-label",
+                          className="small text-muted mx-2"),
+                dbc.Button(
+                    html.I(className="fas fa-chevron-right"),
+                    id="forecast-nav-next",
+                    color="secondary",
+                    size="sm",
+                    outline=True,
+                    className="px-2 py-1",
+                    n_clicks=0,
+                ),
+                dbc.Button(
+                    "Today",
+                    id="forecast-nav-today",
+                    color="info",
+                    size="sm",
+                    outline=True,
+                    className="px-2 py-1 ms-2",
+                    n_clicks=0,
+                ),
+            ], className="ms-auto d-flex align-items-center"),
+        ], className="py-2 d-flex align-items-center"),
+        dbc.CardBody([
+            dcc.Store(id="forecast-nav-offset", data=0),
+            # Summary stats
+            dbc.Row([
+                dbc.Col([
+                    html.Div("Avg Error", className="text-muted small"),
+                    html.Span("--", id="forecast-acc-mae",
+                              className="fw-bold small text-warning"),
+                ], xs=4, className="text-center"),
+                dbc.Col([
+                    html.Div("Over-est.", className="text-muted small"),
+                    html.Span("--", id="forecast-acc-over",
+                              className="fw-bold small text-danger"),
+                ], xs=4, className="text-center"),
+                dbc.Col([
+                    html.Div("Under-est.", className="text-muted small"),
+                    html.Span("--", id="forecast-acc-under",
+                              className="fw-bold small text-success"),
+                ], xs=4, className="text-center"),
+            ], className="mb-2 g-1"),
+            dcc.Graph(id="forecast-vs-actual-chart",
+                      config={"displayModeBar": False, "scrollZoom": False,
+                              "displaylogo": False},
+                      style={"height": "300px"}),
+            # Data table below chart
+            html.Div(id="forecast-vs-actual-table", style={"overflowX": "auto"}),
         ], className="p-2"),
     ], className="mb-3")
 
@@ -1131,6 +1298,7 @@ def _analytics_page() -> html.Div:
         ], className="mb-2"),
 
         _weather_forecast_card(),
+        _forecast_vs_actual_card(),
         _hourly_pattern_card(),
         _daily_detail_table_card(),
         _daily_comparison_card(),

@@ -2,9 +2,10 @@
 
 import logging
 import zoneinfo
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Request
+import aiohttp
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app import database as db
@@ -373,6 +374,103 @@ async def get_weather(request: Request):
         return {"forecast": None, "message": "Weather service not available"}
     forecast = await weather.get_forecast()
     return {"forecast": forecast}
+
+
+# Open-Meteo geocoding endpoint
+_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+
+@router.get("/weather/geocode")
+async def geocode_city(q: str = Query(..., min_length=2, max_length=100),
+                       count: int = Query(default=10, ge=1, le=20)):
+    """Search for cities/locations by name using Open-Meteo geocoding API."""
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=8)
+    ) as session:
+        try:
+            async with session.get(
+                _GEOCODING_URL,
+                params={"name": q, "count": count, "language": "en", "format": "json"},
+            ) as resp:
+                if resp.status != 200:
+                    raise HTTPException(502, "Geocoding service unavailable")
+                data = await resp.json()
+        except aiohttp.ClientError as exc:
+            raise HTTPException(502, f"Geocoding request failed: {exc}") from exc
+
+    results = data.get("results", [])
+    # Normalise to a flat, safe structure
+    return [
+        {
+            "id": r.get("id"),
+            "name": r.get("name", ""),
+            "latitude": r.get("latitude"),
+            "longitude": r.get("longitude"),
+            "elevation": r.get("elevation"),
+            "country": r.get("country", ""),
+            "country_code": r.get("country_code", ""),
+            "admin1": r.get("admin1", ""),   # state / region
+            "admin2": r.get("admin2", ""),   # county / district
+            "admin3": r.get("admin3", ""),   # municipality / city district
+            "timezone": r.get("timezone", ""),
+            "population": r.get("population"),
+        }
+        for r in results
+    ]
+
+
+class WeatherLocationRequest(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    city_name: str = ""
+    region_name: str = ""
+
+
+@router.get("/weather/location")
+async def get_weather_location():
+    """Return current weather location config."""
+    return {
+        "latitude": db.get_config("weather_latitude", 48.14),
+        "longitude": db.get_config("weather_longitude", 11.58),
+        "city_name": db.get_config("weather_city_name", "Munich"),
+        "region_name": db.get_config("weather_region_name", "Bavaria, Germany"),
+    }
+
+
+@router.post("/weather/location")
+async def set_weather_location(req: WeatherLocationRequest, request: Request):
+    """Save a new weather location and invalidate the forecast cache."""
+    db.set_config("weather_latitude", req.latitude)
+    db.set_config("weather_longitude", req.longitude)
+    db.set_config("weather_city_name", req.city_name)
+    db.set_config("weather_region_name", req.region_name)
+
+    # Immediately apply to running WeatherService instance
+    weather = getattr(request.app.state, "weather", None)
+    if weather is not None:
+        weather.latitude = req.latitude
+        weather.longitude = req.longitude
+        weather._cache = None
+        weather._cache_time = 0.0
+
+    return {"success": True, "city": req.city_name, "lat": req.latitude, "lon": req.longitude}
+
+
+@router.get("/weather/forecast-history")
+async def get_forecast_history(
+    days: int = Query(default=14, ge=1, le=90),
+    offset: int = Query(default=0, ge=0, description="Page offset: 0=current, 1=prev 14 days, …"),
+):
+    """Return forecast vs actual comparison data for a navigable date window.
+
+    offset=0 covers today-7 … today+7.
+    offset=1 covers today-21 … today-7, etc.
+    """
+    today = date.today()
+    future_days = 7
+    end_d = today + timedelta(days=future_days) - timedelta(days=offset * days)
+    start_d = end_d - timedelta(days=days)
+    return db.get_forecast_comparison(start_d.isoformat(), end_d.isoformat())
 
 
 # ---------------------------------------------------------------------------

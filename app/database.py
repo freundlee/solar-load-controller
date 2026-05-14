@@ -84,9 +84,21 @@ CREATE TABLE IF NOT EXISTS daily_energy (
     updated_at          TIMESTAMP DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS forecast_snapshots (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    forecast_date   TEXT NOT NULL,
+    fetched_at      TIMESTAMP NOT NULL,
+    estimated_kwh   REAL,
+    sunshine_hours  REAL,
+    cloud_cover_pct REAL,
+    weather_code    INTEGER,
+    radiation_mj    REAL
+);
+
 CREATE INDEX IF NOT EXISTS idx_meter_readings_ts ON meter_readings(timestamp);
 CREATE INDEX IF NOT EXISTS idx_load_changes_ts   ON load_changes(timestamp);
 CREATE INDEX IF NOT EXISTS idx_power_events_ts   ON power_events(start_time);
+CREATE INDEX IF NOT EXISTS idx_forecast_snaps    ON forecast_snapshots(forecast_date, fetched_at);
 """
 
 # ---------------------------------------------------------------------------
@@ -152,6 +164,18 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
             ("display_timezone", json.dumps(_default_tz)),
         )
+
+        # Seed weather location defaults (Munich, Germany)
+        for _wk, _wv in [
+            ("weather_latitude", 48.14),
+            ("weather_longitude", 11.58),
+            ("weather_city_name", "Munich"),
+            ("weather_region_name", "Bavaria, Germany"),
+        ]:
+            conn.execute(
+                "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)",
+                (_wk, json.dumps(_wv)),
+            )
 
         # Seed appliance profiles
         existing = conn.execute("SELECT COUNT(*) FROM appliance_profiles").fetchone()[0]
@@ -598,3 +622,78 @@ def backfill_daily_energy_from_readings() -> int:
 
     logger.info("Backfilled import/export for %d dates from meter readings", updated)
     return updated
+
+
+# ---------------------------------------------------------------------------
+# Forecast snapshots
+# ---------------------------------------------------------------------------
+
+
+def insert_forecast_snapshot(forecast_date: str, fetched_at: str,
+                              estimated_kwh: float, sunshine_hours: float,
+                              cloud_cover_pct: float, weather_code: int,
+                              radiation_mj: float) -> None:
+    """Store a single-day forecast snapshot (idempotent per date+hour)."""
+    # Only keep one snapshot per forecast_date per UTC hour to avoid spam
+    hour_bucket = fetched_at[:13]  # "YYYY-MM-DDTHH"
+    with get_db() as conn:
+        existing = conn.execute(
+            """SELECT id FROM forecast_snapshots
+               WHERE forecast_date = ? AND fetched_at LIKE ?""",
+            (forecast_date, f"{hour_bucket}%"),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE forecast_snapshots
+                   SET estimated_kwh=?, sunshine_hours=?, cloud_cover_pct=?,
+                       weather_code=?, radiation_mj=?, fetched_at=?
+                   WHERE id=?""",
+                (estimated_kwh, sunshine_hours, cloud_cover_pct,
+                 weather_code, radiation_mj, fetched_at, existing["id"]),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO forecast_snapshots
+                   (forecast_date, fetched_at, estimated_kwh, sunshine_hours,
+                    cloud_cover_pct, weather_code, radiation_mj)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (forecast_date, fetched_at, estimated_kwh, sunshine_hours,
+                 cloud_cover_pct, weather_code, radiation_mj),
+            )
+
+
+def get_forecast_comparison(start_date: str, end_date: str) -> list[dict]:
+    """Return forecast vs actual solar for each date in the range.
+
+    Uses the most-recent forecast snapshot per day joined with daily_energy.
+    """
+    with get_db() as conn:
+        rows = conn.execute(
+            """WITH ranked AS (
+                 SELECT forecast_date, estimated_kwh, sunshine_hours,
+                        cloud_cover_pct, weather_code, radiation_mj, fetched_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY forecast_date
+                            ORDER BY fetched_at DESC
+                        ) AS rn
+                 FROM forecast_snapshots
+                 WHERE forecast_date >= ? AND forecast_date <= ?
+               )
+               SELECT
+                 r.forecast_date             AS date,
+                 r.estimated_kwh             AS forecast_kwh,
+                 r.sunshine_hours            AS forecast_sun_h,
+                 r.cloud_cover_pct           AS forecast_cloud_pct,
+                 r.weather_code,
+                 r.radiation_mj              AS forecast_radiation_mj,
+                 r.fetched_at                AS forecasted_at,
+                 de.solar_production_wh / 1000.0  AS actual_kwh,
+                 de.grid_import_wh / 1000.0       AS actual_import_kwh,
+                 de.grid_export_wh / 1000.0       AS actual_export_kwh
+               FROM ranked r
+               LEFT JOIN daily_energy de ON de.date = r.forecast_date
+               WHERE r.rn = 1
+               ORDER BY r.forecast_date ASC""",
+            (start_date, end_date),
+        ).fetchall()
+        return [dict(r) for r in rows]
