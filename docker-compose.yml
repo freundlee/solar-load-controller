@@ -2,36 +2,21 @@ version: '3.8'
 
 services:
   solar-dashboard:
-    image: 10.10.0.3:5000/solar-dashboard:latest
+    build: .
+    env_file: .env
     environment:
-      - TZ=Europe/Berlin
+      - TZ=${TZ:-Europe/Berlin}
       - ANKER_EMAIL=${ANKER_EMAIL}
       - ANKER_PASSWORD=${ANKER_PASSWORD}
       - ANKER_COUNTRY=${ANKER_COUNTRY:-DE}
       - IOMETER_HOST=${IOMETER_HOST:-192.168.178.96}
+    ports:
+      - "8000:8000"
     volumes:
       - solar-data:/app/data
-    networks:
-      - traefik-public
-    deploy:
-      replicas: 1
-      placement:
-        constraints:
-          - node.hostname == node2
-      labels:
-        - "traefik.enable=true"
-        - "traefik.docker.network=traefik-public"
-        - "traefik.http.routers.solar.rule=Host(`solar.duoa.de`)"
-        - "traefik.http.routers.solar.entrypoints=websecure"
-        - "traefik.http.routers.solar.tls=true"
-        - "traefik.http.routers.solar.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.solar.middlewares=auth@swarm"
-        - "traefik.http.services.solar.loadbalancer.server.port=8000"
+    network_mode: host
+    restart: unless-stopped
 
 volumes:
   solar-data:
     driver: local
-
-networks:
-  traefik-public:
-    external: true

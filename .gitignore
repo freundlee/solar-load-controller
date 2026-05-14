@@ -11,3 +11,12 @@ data/*.db-shm
 .venv/
 venv/
 *.log
+
+# Anker API auth token cache — never commit real credentials
+app/api/authcache/*.json
+
+# Private infrastructure docs
+cicd_api.md
+
+# Private production Docker Swarm config
+docker-compose.swarm.yml
