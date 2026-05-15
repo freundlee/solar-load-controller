@@ -36,6 +36,52 @@ In addition, in another project, I developed an ESP32-based real-time display te
 
 Overall, this integrated solution is convenient, accurate, and practical for daily use. Anyone who is interested is welcome to download and try it out.
 
+## Screenshots
+
+### Live Dashboard
+![Dashboard Overview](screenshots/user%20UI.png)
+*Real-time view: solar production, battery SOC, grid reading, per-channel PV breakdown, power flow, and load control — all on one page.*
+
+### Load Control & Strategy Selection
+![Load Control](screenshots/Load%20Control.png)
+*Manual load slider (0–800 W) alongside the auto-control panel with 5 selectable strategies.*
+
+### Live Grid Chart
+![Live Grid](screenshots/Live%20Grid.png)
+*24-hour grid meter history. Spikes are appliance events; the strategy keeps the baseline near zero.*
+
+### Strategy Configuration
+![Strategy Config](screenshots/Strategy%20Config.png)
+*All control parameters tunable live from the UI — no restart required.*
+
+### Analytics — Load vs Grid Balance
+![Load vs Grid Balance](screenshots/Load%20vs%20Grid%20Balance.png)
+*Overlay of Solarbank load output and grid meter over time, with colour-coded import/export zones and self-sufficiency stats.*
+
+### Analytics — Daily Energy Flow
+![Daily Energy Flow](screenshots/Daily%20Energy%20Flow.png)
+*Multi-day view of solar self-use, grid import/export and self-sufficiency percentage.*
+
+### Analytics — Energy Flow (30 days)
+![Energy Flow 30 days](screenshots/Energy_Flow.png)
+*30-day stacked bar chart: self-use, grid export, and grid import at a glance.*
+
+### Analytics — Daily Detail Table
+![Daily Detail](screenshots/Daily%20Detail.png)
+*Per-day breakdown of solar production, home consumption, import, export, electricity cost and savings.*
+
+### Analytics — Hourly Pattern (7-day avg)
+![Hourly Pattern](screenshots/Hourly%20Pattern%207%20day.png)
+*Average grid usage by hour of day over 7 days — useful for spotting recurring load patterns.*
+
+### Solar Forecast (7-day)
+![7-Day Solar Forecast](screenshots/Energy_Flow_30days.png)
+*7-day solar yield forecast (Open-Meteo) with estimated kWh output, sun hours, cloud cover and temperature.*
+
+### Forecast vs Actual Solar
+![Forecast vs Actual](screenshots/Forecast_vs_Actual%20solar.png)
+*Comparison of forecast vs actual solar production with over/under-estimation tracking.*
+
 ## Quick Start
 
 ### 1. Configure credentials
