@@ -1,31 +1,45 @@
 name: Build and Deploy
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - dev          # 加新分支
+      # - staging    # 后续要加新环境，就在这里追加
+
 jobs:
   build-deploy:
     runs-on: node2
     container:
       image: catthehacker/ubuntu:act-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Login to registry
-        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login 10.10.0.3:5000 -u "${{ secrets.REGISTRY_USER }}" --password-stdin
-      
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure environment
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            SERVICE="<app>"
+            IMAGE="<app>"
+          else
+            SERVICE="<app>-${{ github.ref_name }}"
+            IMAGE="<app>-${{ github.ref_name }}"
+          fi
+          echo "SERVICE_NAME=$SERVICE" >> $GITHUB_OUTPUT
+          echo "IMAGE_TAG=10.10.0.3:5000/$IMAGE:${{ github.run_number }}" >> $GITHUB_OUTPUT
+
       - name: Build image
-        run: docker build -t 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} .
-      
-      - name: Login to registry
-        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login 10.10.0.3:5000 -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+        run: docker build -t ${{ steps.env.outputs.IMAGE_TAG }} .
 
       - name: Push to registry
-        run: docker push 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
-      
-      - name: Deploy or update service
+        run: docker push ${{ steps.env.outputs.IMAGE_TAG }}
+
+      - name: Update swarm service
         run: |
-          if docker service ls --format '{{.Name}}' | grep -q '^solar-dashboard$'; then
-            docker service update --image 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} --with-registry-auth solar-dashboard
-          else
-            docker service create --name solar-dashboard --replicas 1 --publish 8888:3000 --with-registry-auth 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
-          fi
+          docker service update \
+            --image ${{ steps.env.outputs.IMAGE_TAG }} \
+            --env-add ANKER_EMAIL="${{ secrets.ANKER_EMAIL }}" \
+            --env-add ANKER_PASSWORD="${{ secrets.ANKER_PASSWORD }}" \
+            --with-registry-auth \
+            ${{ steps.env.outputs.SERVICE_NAME }}
