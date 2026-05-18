@@ -3,7 +3,7 @@
 Automatically controls Anker Solarbank 2 E1600 AC home load (0–800 W) based on real-time IOMeter smart meter readings to minimize grid electricity usage.
 
 ## Features
- 
+
 - **Auto load control** — Reads the grid meter in real-time and adjusts the Solarbank home load to keep grid import near zero
 - **Manual control** — Slider + buttons to manually set load (0–800 W in 10 W steps)
 - **Real-time dashboard** — Solar production, battery SOC, meter reading, power flow visualisation
