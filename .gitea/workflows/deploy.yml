@@ -22,14 +22,6 @@ jobs:
       - name: Push to registry
         run: docker push 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
       
-      - name: Deploy or update service
-        run: |
-          if docker service ls --format '{{.Name}}' | grep -q '^solar-dashboard$'; then
-            docker service update --image 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} --with-registry-auth solar-dashboard
-          else
-            docker service create --name solar-dashboard --replicas 1 --publish 8888:3000 --with-registry-auth 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
-          fi
-
       - name: Update swarm service
         run: |
           docker service update \
@@ -38,3 +30,13 @@ jobs:
             --env-add ANKER_PASSWORD="${{ secrets.ANKER_PASSWORD }}" \
             --with-registry-auth \
             ${{ steps.env.outputs.SERVICE_NAME }}
+            
+      - name: Deploy or update service
+        run: |
+          if docker service ls --format '{{.Name}}' | grep -q '^solar-dashboard$'; then
+            docker service update --image 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} --with-registry-auth solar-dashboard
+          else
+            docker service create --name solar-dashboard --replicas 1 --publish 8888:3000 --with-registry-auth 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
+          fi
+
+      
