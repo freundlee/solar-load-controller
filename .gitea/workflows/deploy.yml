@@ -1,44 +1,28 @@
 name: Build and Deploy
-
 on:
   push:
-    branches:
-      - main
-      - dev
-
+    branches: [main]
 jobs:
   build-deploy:
     runs-on: node2
     container:
       image: catthehacker/ubuntu:act-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure environment
-        id: env
-        run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            SERVICE="solar-dashboard"
-            IMAGE="solar-dashboard"
-          else
-            SERVICE="solar-dashboard-${{ github.ref_name }}"
-            IMAGE="solar-dashboard-${{ github.ref_name }}"
-          fi
-          echo "SERVICE_NAME=$SERVICE" >> $GITHUB_OUTPUT
-          echo "IMAGE_TAG=10.10.0.3:5000/$IMAGE:${{ github.run_number }}" >> $GITHUB_OUTPUT
-
+      - uses: actions/checkout@v4
+      
+      - name: Login to registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login 10.10.0.3:5000 -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+      
       - name: Build image
-        run: docker build -t ${{ steps.env.outputs.IMAGE_TAG }} .
-
+        run: docker build -t 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} .
+      
       - name: Push to registry
-        run: docker push ${{ steps.env.outputs.IMAGE_TAG }}
-
-      - name: Update swarm service
+        run: docker push 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
+      
+      - name: Deploy or update service
         run: |
-          docker service update \
-            --image ${{ steps.env.outputs.IMAGE_TAG }} \
-            --env-add ANKER_EMAIL="${{ secrets.ANKER_EMAIL }}" \
-            --env-add ANKER_PASSWORD="${{ secrets.ANKER_PASSWORD }}" \
-            --with-registry-auth \
-            ${{ steps.env.outputs.SERVICE_NAME }}
+          if docker service ls --format '{{.Name}}' | grep -q '^solar-dashboard$'; then
+            docker service update --image 10.10.0.3:5000/solar-dashboard:${{ github.run_number }} --with-registry-auth solar-dashboard
+          else
+            docker service create --name solar-dashboard --replicas 1 --publish 8888:3000 --with-registry-auth 10.10.0.3:5000/solar-dashboard:${{ github.run_number }}
+          fi
