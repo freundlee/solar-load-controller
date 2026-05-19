@@ -1,0 +1,49 @@
+version: '3.8'
+
+# 变量由 .gitea/workflows/deploy.yml 注入（不同分支不同值）
+# Required: IMAGE_TAG, STACK_NAME, DOMAIN, DATA_DIR, ANKER_EMAIL, ANKER_PASSWORD
+# Optional: APP_ENV (default: production), APP_PORT (default: 8000), TRAEFIK_MIDDLEWARES
+
+services:
+  app:
+    image: ${IMAGE_TAG}
+    environment:
+      - ANKER_EMAIL=${ANKER_EMAIL}
+      - ANKER_PASSWORD=${ANKER_PASSWORD}
+      - APP_ENV=${APP_ENV:-production}
+    volumes:
+      - ${DATA_DIR}:/app/data
+    networks:
+      - traefik-public
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.hostname == node2
+      update_config:
+        order: start-first
+        failure_action: rollback
+        delay: 5s
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=traefik-public"
+        - "traefik.http.routers.${STACK_NAME}.rule=Host(`${DOMAIN}`)"
+        - "traefik.http.routers.${STACK_NAME}.entrypoints=websecure"
+        - "traefik.http.routers.${STACK_NAME}.tls=true"
+        - "traefik.http.routers.${STACK_NAME}.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.${STACK_NAME}.middlewares=${TRAEFIK_MIDDLEWARES}"
+        - "traefik.http.services.${STACK_NAME}.loadbalancer.server.port=${APP_PORT:-8000}"
+
+networks:
+  traefik-public:
+    external: true
