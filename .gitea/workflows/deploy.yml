@@ -20,12 +20,12 @@ jobs:
         run: |
           if [ "${{ github.ref_name }}" = "main" ]; then
             STACK_NAME="solar-load-controller"
-            DOMAIN="solar-load.duoa.de"
+            DOMAIN="solar.duoa.de"
             APP_ENV="production"
             TRAEFIK_MIDDLEWARES=""
           else
             STACK_NAME="solar-load-controller-dev"
-            DOMAIN="solar-load-dev.duoa.de"
+            DOMAIN="solar-dev.duoa.de"
             APP_ENV="dev"
             TRAEFIK_MIDDLEWARES="internal-auth@swarm"
           fi
