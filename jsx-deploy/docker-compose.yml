@@ -1,0 +1,17 @@
+services:
+  jsx-app:
+    build: .
+    container_name: jsx-app
+    restart: unless-stopped
+    ports:
+      - "3000:80"          # Change left side to your preferred host port
+    # Uncomment if you want HTTPS via a reverse proxy network:
+    # networks:
+    #   - proxy
+    labels:
+      # Traefik labels (optional — remove if not using Traefik)
+      - "traefik.enable=false"
+
+# networks:
+#   proxy:
+#     external: true
